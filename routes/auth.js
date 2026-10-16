@@ -1,7 +1,7 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { sql } from '../lib/db.js';
+import { sql, getAuth } from '../lib/db.js';
 
 const router = express.Router();
 
@@ -51,5 +51,27 @@ router.post('/login', async (req, res) => {
 });
 
 router.post('/logout', (req, res) => res.json({ ok: true }));
+
+// Delete own account (frontend: POST /api/auth/delete {password}); backups cascade
+router.post('/delete', async (req, res) => {
+  let user;
+  try { user = getAuth(req); }
+  catch { return res.status(401).json({ error: 'unauthorized' }); }
+
+  const { password } = req.body || {};
+  if (!password) return res.status(400).json({ error: 'missing' });
+
+  try {
+    const [u] = await sql`SELECT id, password_hash FROM users WHERE id=${user.uid}`;
+    if (!u) return res.status(401).json({ error: 'unauthorized' });
+    const ok = await bcrypt.compare(password, u.password_hash);
+    if (!ok) return res.status(401).json({ error: 'invalid' });
+    await sql`DELETE FROM users WHERE id=${u.id}`;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'server' });
+  }
+});
 
 export default router;
