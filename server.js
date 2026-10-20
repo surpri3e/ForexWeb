@@ -8,6 +8,8 @@ import meRoutes from './routes/me.js';
 import backupRoutes from './routes/backup.js';
 import adminRoutes from './routes/admin.js';
 import messageRoutes from './routes/messages.js';
+import supportRoutes from './routes/support.js';
+import globalRoutes, { startGlobalHousekeeping } from './routes/global.js';
 import newsRoutes, { startNewsRefresh } from './routes/news.js';
 import { rateLimit } from './lib/limit.js';
 import { ensureSchema } from './lib/db.js';
@@ -37,8 +39,10 @@ app.use(cors({ origin: (origin, cb) => cb(null, !origin || allowed.includes(orig
 app.use('/api/auth', rateLimit({ windowMs: 15 * 60 * 1000, max: 150 }), express.json({ limit: '20kb' }), authRoutes);
 app.use('/api/me', meRoutes);
 app.use('/api/backup', express.json({ limit: '5mb' }), backupRoutes);
-app.use('/api/admin', express.json({ limit: '20kb' }), adminRoutes);
+app.use('/api/admin', express.json({ limit: '300kb' }), adminRoutes);
 app.use('/api/messages', messageRoutes);
+app.use('/api/support', express.json({ limit: '20kb' }), supportRoutes);
+app.use('/api/global', express.json({ limit: '600kb' }), globalRoutes);
 app.use('/api/news', newsRoutes);
 
 app.get('/healthz', (req, res) => res.json({ ok: true }));
@@ -57,5 +61,6 @@ const PORT = process.env.PORT || 3000;
 try { await ensureSchema(); } catch (e) { console.error('schema setup failed:', e); }
 app.listen(PORT, () => {
   console.log(`Server running on ${PORT}`);
-  startNewsRefresh();
+  startNewsRefresh().catch((e) => console.error('news start failed:', e.message));
+  startGlobalHousekeeping();
 });
