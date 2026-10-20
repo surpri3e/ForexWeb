@@ -1,6 +1,7 @@
 import express from 'express';
 import crypto from 'crypto';
 import { sql } from '../lib/db.js';
+import { newsStatus, refresh as refreshNews, importFeed } from './news.js';
 
 if (process.env.ADMIN_KEY && process.env.ADMIN_KEY.length < 24) console.warn('ADMIN_KEY is short; use 32+ random characters');
 const router = express.Router();
@@ -90,11 +91,11 @@ const sec = (d) => (d ? Math.floor(new Date(d).getTime() / 1000) : 0);
 router.get('/messages', async (req, res) => {
   try {
     const rows = await sql`
-      SELECT m.id, m.title, m.body, m.kind, m.audience, m.target_email, m.popup, m.created_at, m.expires_at,
+      SELECT m.id, m.title, m.body, m.kind, m.audience, m.target_email, m.popup, m.created_at, m.expires_at, m.edited_at,
              COUNT(r.user_id)::int AS total, COUNT(r.read_at)::int AS reads
       FROM messages m LEFT JOIN message_recipients r ON r.message_id = m.id
       GROUP BY m.id ORDER BY m.id DESC LIMIT 50`;
-    res.json({ messages: rows.map((m) => ({ id: m.id, title: m.title || '', body: m.body, kind: m.kind, audience: m.audience, target: m.target_email || '', popup: !!m.popup, created_at: sec(m.created_at), expires_at: sec(m.expires_at), total: m.total, reads: m.reads })) });
+    res.json({ messages: rows.map((m) => ({ id: m.id, title: m.title || '', body: m.body, kind: m.kind, audience: m.audience, target: m.target_email || '', popup: !!m.popup, created_at: sec(m.created_at), expires_at: sec(m.expires_at), edited: !!m.edited_at, total: m.total, reads: m.reads })) });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'server' });
@@ -147,6 +148,210 @@ router.delete('/messages/:id', async (req, res) => {
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'server' });
+  }
+});
+
+// fix a typo: edit the text of a message that was already sent (recipients and read counts are kept)
+router.patch('/messages/:id', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'bad_id' });
+  const b = req.body || {};
+  const body = String(b.body || '').trim();
+  const title = String(b.title || '').trim().slice(0, 80);
+  if (!body || body.length > 600) return res.status(400).json({ error: 'bad_body' });
+  try {
+    const ex = await sql`SELECT id FROM messages WHERE id = ${id}`;
+    if (!ex.length) return res.status(404).json({ error: 'not_found' });
+    await sql`UPDATE messages SET title = ${title || null}, body = ${body}, edited_at = NOW() WHERE id = ${id}`;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'server' });
+  }
+});
+
+// ---------- moderation of the public "Global" feed ----------
+router.get('/global/posts', async (req, res) => {
+  const reported = (req.query && req.query.filter) !== 'all';
+  try {
+    const rows = reported
+      ? await sql`
+        SELECT p.id, p.symbol, p.body, p.hidden, p.created_at, pr.username, pr.banned,
+          (SELECT COUNT(*) FROM post_reports r WHERE r.post_id = p.id)::int AS reports
+        FROM posts p JOIN profiles pr ON pr.user_id = p.user_id
+        WHERE EXISTS (SELECT 1 FROM post_reports r WHERE r.post_id = p.id) OR p.hidden = TRUE
+        ORDER BY p.id DESC LIMIT 60`
+      : await sql`
+        SELECT p.id, p.symbol, p.body, p.hidden, p.created_at, pr.username, pr.banned,
+          (SELECT COUNT(*) FROM post_reports r WHERE r.post_id = p.id)::int AS reports
+        FROM posts p JOIN profiles pr ON pr.user_id = p.user_id
+        ORDER BY p.id DESC LIMIT 60`;
+    res.json({ posts: rows.map((r) => ({ id: r.id, symbol: r.symbol, body: r.body || '', hidden: !!r.hidden, created_at: sec(r.created_at), username: r.username, banned: !!r.banned, reports: r.reports })) });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'server' }); }
+});
+
+router.get('/global/img/:id', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id)) return res.status(404).end();
+  try {
+    const r = await sql`SELECT img_b64 FROM posts WHERE id = ${id}`;
+    if (!r.length) return res.status(404).end();
+    res.set({ 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=60' });
+    res.end(Buffer.from(r[0].img_b64, 'base64'));
+  } catch (e) { console.error(e); res.status(500).end(); }
+});
+
+router.delete('/global/posts/:id', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'bad_id' });
+  try { await sql`DELETE FROM posts WHERE id = ${id}`; res.json({ ok: true }); }
+  catch (e) { console.error(e); res.status(500).json({ error: 'server' }); }
+});
+
+router.post('/global/posts/:id/hide', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'bad_id' });
+  const hidden = !!(req.body || {}).hidden;
+  try {
+    await sql`UPDATE posts SET hidden = ${hidden} WHERE id = ${id}`;
+    if (!hidden) await sql`DELETE FROM post_reports WHERE post_id = ${id}`; // restored posts start with a clean report list
+    res.json({ ok: true });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'server' }); }
+});
+
+router.post('/global/ban', async (req, res) => {
+  const u = String((req.body || {}).username || '').toLowerCase().replace(/[^a-z0-9_.]/g, '').slice(0, 20);
+  const banned = !!(req.body || {}).banned;
+  if (!u) return res.status(400).json({ error: 'bad_username' });
+  try {
+    const r = await sql`SELECT user_id FROM profiles WHERE username = ${u}`;
+    if (!r.length) return res.status(404).json({ error: 'no_user' });
+    await sql`UPDATE profiles SET banned = ${banned} WHERE username = ${u}`;
+    res.json({ ok: true });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'server' }); }
+});
+
+// ---------- donation methods (card / wallet / link / text) ----------
+const DKINDS = new Set(['card', 'wallet', 'link', 'text']);
+const cleanTxt = (v, max) => String(v == null ? '' : v).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u200B-\u200F\u202A-\u202E\u2060-\u2069\uFEFF]/g, '').trim().slice(0, max);
+function checkDonate(b) {
+  const kind = DKINDS.has(b.kind) ? b.kind : null;
+  if (!kind) return { error: 'bad_kind' };
+  const title = cleanTxt(b.title, 40);
+  let value = cleanTxt(b.value, 300);
+  const extra = cleanTxt(b.extra, 60);
+  if (!title || !value) return { error: 'missing' };
+  if (kind === 'card' && !/^[0-9][0-9 -]{10,30}[0-9]$/.test(value)) return { error: 'bad_card' };
+  if (kind === 'wallet' && !/^[A-Za-z0-9:._-]{10,128}$/.test(value)) return { error: 'bad_wallet' };
+  if (kind === 'link' && !/^https?:\/\/[^\s<>"']{4,280}$/i.test(value)) return { error: 'bad_link' };
+  return { kind, title, value, extra };
+}
+router.get('/donate', async (req, res) => {
+  try {
+    const m = await sql`SELECT id, kind, title, value, extra, enabled, sort_order FROM donate_methods ORDER BY sort_order, id`;
+    const i = await sql`SELECT v FROM site_settings WHERE k = 'donate_intro'`;
+    res.json({ intro: i.length ? i[0].v || '' : '', methods: m.map((x) => ({ id: x.id, kind: x.kind, title: x.title, value: x.value, extra: x.extra || '', enabled: !!x.enabled })) });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'server' }); }
+});
+router.post('/donate', async (req, res) => {
+  const v = checkDonate(req.body || {});
+  if (v.error) return res.status(400).json({ error: v.error });
+  try {
+    const [c] = await sql`SELECT COUNT(*)::int AS n FROM donate_methods`;
+    if (c.n >= 20) return res.status(400).json({ error: 'too_many' });
+    const [r] = await sql`INSERT INTO donate_methods (kind, title, value, extra, sort_order) VALUES (${v.kind}, ${v.title}, ${v.value}, ${v.extra}, ${c.n}) RETURNING id`;
+    res.json({ id: r.id });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'server' }); }
+});
+router.patch('/donate/:id', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'bad_id' });
+  const b = req.body || {};
+  try {
+    if (b.enabled !== undefined && b.title === undefined) {
+      await sql`UPDATE donate_methods SET enabled = ${!!b.enabled} WHERE id = ${id}`;
+      return res.json({ ok: true });
+    }
+    const v = checkDonate(b);
+    if (v.error) return res.status(400).json({ error: v.error });
+    await sql`UPDATE donate_methods SET kind = ${v.kind}, title = ${v.title}, value = ${v.value}, extra = ${v.extra} WHERE id = ${id}`;
+    res.json({ ok: true });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'server' }); }
+});
+router.delete('/donate/:id', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'bad_id' });
+  try { await sql`DELETE FROM donate_methods WHERE id = ${id}`; res.json({ ok: true }); }
+  catch (e) { console.error(e); res.status(500).json({ error: 'server' }); }
+});
+router.put('/donate-intro', async (req, res) => {
+  const text = cleanTxt((req.body || {}).text, 400);
+  try {
+    const ex = await sql`SELECT k FROM site_settings WHERE k = 'donate_intro'`;
+    if (ex.length) await sql`UPDATE site_settings SET v = ${text} WHERE k = 'donate_intro'`;
+    else await sql`INSERT INTO site_settings (k, v) VALUES ('donate_intro', ${text})`;
+    res.json({ ok: true });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'server' }); }
+});
+
+// ---------- support tickets ----------
+router.get('/tickets', async (req, res) => {
+  const all = (req.query && req.query.status) === 'all';
+  try {
+    const rows = all
+      ? await sql`SELECT t.id, t.subject, t.category, t.status, t.created_at, t.updated_at, u.email FROM tickets t JOIN users u ON u.id = t.user_id ORDER BY t.updated_at DESC, t.id DESC LIMIT 100`
+      : await sql`SELECT t.id, t.subject, t.category, t.status, t.created_at, t.updated_at, u.email FROM tickets t JOIN users u ON u.id = t.user_id WHERE t.status = 'open' ORDER BY t.updated_at DESC, t.id DESC LIMIT 100`;
+    const [c] = await sql`SELECT COUNT(*)::int AS n FROM tickets WHERE status = 'open'`;
+    res.json({ open: c.n, tickets: rows.map((r) => ({ id: r.id, subject: r.subject, category: r.category, status: r.status, email: r.email, created_at: sec(r.created_at), updated_at: sec(r.updated_at) })) });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'server' }); }
+});
+router.get('/tickets/:id', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'bad_id' });
+  try {
+    const t = await sql`SELECT t.id, t.subject, t.category, t.status, u.email FROM tickets t JOIN users u ON u.id = t.user_id WHERE t.id = ${id}`;
+    if (!t.length) return res.status(404).json({ error: 'not_found' });
+    const m = await sql`SELECT id, from_admin, body, created_at FROM ticket_messages WHERE ticket_id = ${id} ORDER BY id ASC LIMIT 200`;
+    res.json({ ticket: t[0], messages: m.map((x) => ({ id: x.id, from_admin: !!x.from_admin, body: x.body, created_at: sec(x.created_at) })) });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'server' }); }
+});
+router.post('/tickets/:id/reply', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const body = cleanTxt((req.body || {}).body, 1500);
+  if (!Number.isInteger(id) || !body) return res.status(400).json({ error: 'missing' });
+  try {
+    const t = await sql`SELECT id, user_id, subject FROM tickets WHERE id = ${id}`;
+    if (!t.length) return res.status(404).json({ error: 'not_found' });
+    await sql`INSERT INTO ticket_messages (ticket_id, from_admin, body) VALUES (${id}, TRUE, ${body})`;
+    await sql`UPDATE tickets SET status = 'answered', updated_at = NOW() WHERE id = ${id}`;
+    // tell the user through the normal message bell
+    const [m] = await sql`INSERT INTO messages (title, body, kind, audience) VALUES (${'پاسخ تیکت #' + id}, ${'به تیکتت «' + t[0].subject.slice(0, 40) + '» جواب دادیم؛ از منو ← پشتیبانی ببینش.'}, 'info', 'user') RETURNING id`;
+    await sql`INSERT INTO message_recipients (message_id, user_id) VALUES (${m.id}, ${t[0].user_id})`;
+    res.json({ ok: true });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'server' }); }
+});
+router.post('/tickets/:id/status', async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const st = (req.body || {}).status;
+  if (!Number.isInteger(id) || !['open', 'answered', 'closed'].includes(st)) return res.status(400).json({ error: 'bad_status' });
+  try { await sql`UPDATE tickets SET status = ${st}, updated_at = NOW() WHERE id = ${id}`; res.json({ ok: true }); }
+  catch (e) { console.error(e); res.status(500).json({ error: 'server' }); }
+});
+
+// ---------- economic news: status, manual refresh, manual import ----------
+router.get('/news/status', (req, res) => res.json(newsStatus()));
+router.post('/news/refresh', async (req, res) => {
+  try { await Promise.race([refreshNews(), new Promise((r) => setTimeout(r, 30000))]); } catch { /* status below shows the error */ }
+  res.json(newsStatus());
+});
+router.post('/news/import', async (req, res) => {
+  let raw = (req.body || {}).data;
+  try {
+    if (typeof raw === 'string') raw = JSON.parse(raw);
+    const n = await importFeed(raw);
+    res.json({ ok: true, count: n, status: newsStatus() });
+  } catch (e) {
+    res.status(400).json({ error: 'bad_feed', detail: String((e && e.message) || e).slice(0, 80) });
   }
 });
 
