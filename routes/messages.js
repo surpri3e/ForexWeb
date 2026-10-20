@@ -18,7 +18,7 @@ router.get('/', async (req, res) => {
   try {
     const uid = req.user.uid;
     const rows = await sql`
-      SELECT m.id, m.title, m.body, m.kind, m.popup, m.created_at, r.read_at
+      SELECT m.id, m.title, m.body, m.kind, m.popup, m.created_at, m.edited_at, r.read_at
       FROM message_recipients r JOIN messages m ON m.id = r.message_id
       WHERE r.user_id = ${uid} AND (m.expires_at IS NULL OR m.expires_at > NOW())
       ORDER BY m.id DESC LIMIT 50`;
@@ -28,7 +28,7 @@ router.get('/', async (req, res) => {
       WHERE r.user_id = ${uid} AND r.read_at IS NULL AND (m.expires_at IS NULL OR m.expires_at > NOW())`;
     res.json({
       unread: c.n,
-      items: rows.map((m) => ({ id: m.id, title: m.title || '', body: m.body, kind: m.kind, popup: !!m.popup, created_at: sec(m.created_at), read: !!m.read_at }))
+      items: rows.map((m) => ({ id: m.id, title: m.title || '', body: m.body, kind: m.kind, popup: !!m.popup, created_at: sec(m.created_at), edited: !!m.edited_at, read: !!m.read_at }))
     });
   } catch (e) {
     console.error(e);
