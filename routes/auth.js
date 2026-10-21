@@ -1,6 +1,7 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
 import { sql, getAuth } from '../lib/db.js';
 import { rateLimit } from '../lib/limit.js';
 
@@ -57,6 +58,47 @@ router.post('/login', perEmail, async (req, res) => {
     if (!u || !ok) return res.status(401).json({ error: 'invalid' });
 
     await sql`UPDATE users SET last_login=NOW() WHERE id=${u.id}`;
+    res.json({ token: sign(u.id), email: u.email });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'server' });
+  }
+});
+
+
+// ---- ورود خودکار از مینی‌اپ تلگرام (initData با توکن بات اعتبارسنجی می‌شه) ----
+function verifyTelegram(initData) {
+  const tok = process.env.TELEGRAM_BOT_TOKEN;
+  if (!tok) return { error: 'tg_off' };
+  if (typeof initData !== 'string' || initData.length > 4096) return { error: 'invalid' };
+  const p = new URLSearchParams(initData);
+  const hash = p.get('hash');
+  if (!hash || !/^[0-9a-f]{64}$/i.test(hash)) return { error: 'invalid' };
+  p.delete('hash');
+  const str = [...p.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).map(([k, v]) => k + '=' + v).join('\n');
+  const secret = crypto.createHmac('sha256', 'WebAppData').update(tok).digest();
+  const calc = crypto.createHmac('sha256', secret).update(str).digest();
+  const given = Buffer.from(hash, 'hex');
+  if (given.length !== calc.length || !crypto.timingSafeEqual(given, calc)) return { error: 'invalid' };
+  const age = Math.floor(Date.now() / 1000) - (parseInt(p.get('auth_date') || '0', 10) || 0);
+  if (age > 86400 || age < -300) return { error: 'expired' };
+  try { const u = JSON.parse(p.get('user') || 'null'); if (u && Number.isFinite(u.id)) return { id: u.id }; } catch {}
+  return { error: 'invalid' };
+}
+
+router.post('/telegram', async (req, res) => {
+  const v = verifyTelegram(req.body && req.body.initData);
+  if (v.error) return res.status(v.error === 'tg_off' ? 503 : 401).json({ error: v.error });
+  const email = `tg_${v.id}@telegram.local`;
+  try {
+    let [u] = await sql`SELECT id, email FROM users WHERE LOWER(email)=${email} LIMIT 1`;
+    if (!u) {
+      const hash = await bcrypt.hash(crypto.randomBytes(24).toString('hex'), 10);
+      [u] = await sql`INSERT INTO users (email, password_hash) VALUES (${email}, ${hash}) ON CONFLICT DO NOTHING RETURNING id, email`;
+      if (!u) [u] = await sql`SELECT id, email FROM users WHERE LOWER(email)=${email} LIMIT 1`;
+    } else {
+      await sql`UPDATE users SET last_login=NOW() WHERE id=${u.id}`;
+    }
     res.json({ token: sign(u.id), email: u.email });
   } catch (e) {
     console.error(e);
