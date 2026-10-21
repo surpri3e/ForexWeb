@@ -10,6 +10,8 @@ import adminRoutes from './routes/admin.js';
 import messageRoutes from './routes/messages.js';
 import supportRoutes from './routes/support.js';
 import globalRoutes, { startGlobalHousekeeping } from './routes/global.js';
+import aiRoutes from './routes/ai.js';
+import telegramRoutes, { setupTelegram } from './routes/telegram.js';
 import newsRoutes, { startNewsRefresh } from './routes/news.js';
 import { rateLimit } from './lib/limit.js';
 import { ensureSchema } from './lib/db.js';
@@ -23,7 +25,8 @@ app.disable('x-powered-by');
 app.use((req, res, next) => {
   res.set({
     'X-Content-Type-Options': 'nosniff',
-    'X-Frame-Options': 'DENY',
+    // مینی‌اپ تلگرام (نسخهٔ وب) سایت رو داخل iframe باز می‌کنه؛ بقیه اجازهٔ قاب‌گرفتن ندارن
+    'Content-Security-Policy': "frame-ancestors 'self' https://web.telegram.org https://*.telegram.org https://t.me",
     'Referrer-Policy': 'strict-origin-when-cross-origin',
     'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
     'Strict-Transport-Security': 'max-age=15552000'
@@ -44,6 +47,8 @@ app.use('/api/messages', messageRoutes);
 app.use('/api/support', express.json({ limit: '20kb' }), supportRoutes);
 app.use('/api/global', express.json({ limit: '600kb' }), globalRoutes);
 app.use('/api/news', newsRoutes);
+app.use('/api/ai', express.json({ limit: '60kb' }), aiRoutes);
+app.use('/api/telegram', telegramRoutes);
 
 app.get('/healthz', (req, res) => res.json({ ok: true }));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
@@ -63,4 +68,5 @@ app.listen(PORT, () => {
   console.log(`Server running on ${PORT}`);
   startNewsRefresh().catch((e) => console.error('news start failed:', e.message));
   startGlobalHousekeeping();
+  setupTelegram().catch((e) => console.error('telegram setup failed:', e.message));
 });
