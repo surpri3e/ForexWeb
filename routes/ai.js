@@ -89,6 +89,37 @@ router.post('/chat', auth,
     }
   });
 
+
+// عیب‌یابی: یه درخواست خیلی کوچیک به Gemini می‌زنه و جواب خام (بدون کلید) رو برمی‌گردونه. فقط برای کاربر واردشده.
+router.get('/diag', auth, rateLimit({ windowMs: 10 * 60 * 1000, max: 20, key: (r) => 'aid' + (r.user && r.user.uid) }), async (req, res) => {
+  const key = process.env.GEMINI_API_KEY;
+  const out = { keySet: !!key, keyLen: key ? key.length : 0, keyLooksValid: !!key && /^[\w.-]{30,}$/.test(key), model: MODEL, node: process.version };
+  if (!key) return res.json(out);
+  const redact = (x) => String(x == null ? '' : x).split(key).join('[KEY]').slice(0, 700);
+  const hdr = { 'Content-Type': 'application/json', 'x-goog-api-key': key };
+  const tiny = (thinking) => JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'فقط بنویس: سلام' }] }], generationConfig: Object.assign({ maxOutputTokens: 40 }, thinking ? { thinkingConfig: { thinkingLevel: 'low' } } : {}) });
+  const run = async (thinking) => {
+    const ac = new AbortController(); const to = setTimeout(() => ac.abort(), 20000);
+    const t0 = Date.now();
+    try {
+      const r = await fetch(ENDPOINT(MODEL), { method: 'POST', headers: hdr, body: tiny(thinking), signal: ac.signal });
+      const txt = await r.text();
+      return { status: r.status, ms: Date.now() - t0, thinking, body: redact(txt) };
+    } catch (e) { return { error: e.name || 'Error', message: redact(e.message), cause: redact(e.cause && (e.cause.code || e.cause.message)), ms: Date.now() - t0, thinking }; }
+    finally { clearTimeout(to); }
+  };
+  out.generate = await run(true);
+  if (out.generate.status === 400) out.generateNoThinking = await run(false);
+  try {
+    const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', { headers: { 'x-goog-api-key': key }, signal: AbortSignal.timeout(15000) });
+    const j = await r.json().catch(() => ({}));
+    out.modelsStatus = r.status;
+    if (Array.isArray(j.models)) out.models = j.models.filter((m) => (m.supportedGenerationMethods || []).includes('generateContent') && /gemini/i.test(m.name)).map((m) => m.name.replace('models/', ''));
+    else out.modelsBody = redact(JSON.stringify(j));
+  } catch (e) { out.modelsError = redact(e.name + ': ' + e.message); }
+  res.json(out);
+});
+
 router.get('/status', auth, (req, res) => res.json({ on: !!process.env.GEMINI_API_KEY, model: MODEL, daily: DAILY }));
 
 export default router;
