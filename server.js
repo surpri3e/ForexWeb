@@ -14,7 +14,7 @@ import aiRoutes from './routes/ai.js';
 import telegramRoutes, { setupTelegram } from './routes/telegram.js';
 import newsRoutes, { startNewsRefresh } from './routes/news.js';
 import { rateLimit } from './lib/limit.js';
-import { ensureSchema } from './lib/db.js';
+import { ensureSchema, getAuth, sql } from './lib/db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -38,6 +38,21 @@ app.use((req, res, next) => {
 const allowed = (process.env.ALLOWED_ORIGINS || 'https://forexweb.onrender.com').split(',').map((s) => s.trim());
 app.use(cors({ origin: (origin, cb) => cb(null, !origin || allowed.includes(origin)) }));
 
+
+// آخرین زمان حضور کاربر (برای «فعال در ۲۴ ساعت» تو مدیریت)؛ حداکثر هر ۱۰ دقیقه یه بار برای هر کاربر نوشته می‌شه
+const seenAt = new Map();
+setInterval(() => { const t = Date.now() - 3600e3; for (const [k, v] of seenAt) if (v < t) seenAt.delete(k); }, 3600e3).unref();
+app.use('/api', (req, res, next) => {
+  try {
+    const u = getAuth(req), now = Date.now();
+    if (!seenAt.has(u.uid) || now - seenAt.get(u.uid) > 600e3) {
+      seenAt.set(u.uid, now);
+      Promise.resolve(sql`UPDATE users SET last_seen=NOW() WHERE id=${u.uid}`).catch(() => {});
+    }
+  } catch { /* بدون توکن */ }
+  next();
+});
+
 // Small body for auth/admin, big body only where the backup needs it
 app.use('/api/auth', rateLimit({ windowMs: 15 * 60 * 1000, max: 150 }), express.json({ limit: '20kb' }), authRoutes);
 app.use('/api/me', meRoutes);
@@ -52,6 +67,7 @@ app.use('/api/telegram', telegramRoutes);
 
 app.get('/healthz', (req, res) => res.json({ ok: true }));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
+app.get('/ai-test', (req, res) => res.sendFile(path.join(__dirname, 'ai-test.html')));
 app.get('/index.html', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 
 // JSON errors (body too large / bad JSON) instead of an HTML stack page
