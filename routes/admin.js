@@ -52,7 +52,8 @@ router.get('/stats', async (req, res) => {
         (SELECT COUNT(*) FROM users)::int AS users,
         (SELECT COUNT(*) FROM users WHERE created_at > NOW() - INTERVAL '24 hours')::int AS new24h,
         (SELECT COUNT(*) FROM users WHERE created_at > NOW() - INTERVAL '7 days')::int AS new7d,
-        (SELECT COUNT(*) FROM users WHERE last_login > NOW() - INTERVAL '7 days')::int AS active7d,
+        (SELECT COUNT(*) FROM users WHERE GREATEST(COALESCE(last_login,'epoch'::timestamptz),COALESCE(last_seen,'epoch'::timestamptz)) > NOW() - INTERVAL '24 hours')::int AS active24h,
+        (SELECT COUNT(*) FROM users WHERE GREATEST(COALESCE(last_login,'epoch'::timestamptz),COALESCE(last_seen,'epoch'::timestamptz)) > NOW() - INTERVAL '7 days')::int AS active7d,
         (SELECT COUNT(*) FROM backups)::int AS "withBackup"`;
     res.json(r);
   } catch (e) {
@@ -65,7 +66,7 @@ router.get('/users', async (req, res) => {
   try {
     // password_hash is never selected
     const rows = await sql`
-      SELECT email, created_at, last_login
+      SELECT email, created_at, GREATEST(COALESCE(last_login,'epoch'::timestamptz),COALESCE(last_seen,'epoch'::timestamptz)) AS last_login
       FROM users
       ORDER BY created_at DESC
       LIMIT 500`;
