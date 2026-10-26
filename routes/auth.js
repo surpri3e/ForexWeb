@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { sql, getAuth } from '../lib/db.js';
+import { userForTg } from '../lib/store.js';
 import { rateLimit } from '../lib/limit.js';
 
 const router = express.Router();
@@ -89,16 +90,10 @@ function verifyTelegram(initData) {
 router.post('/telegram', async (req, res) => {
   const v = verifyTelegram(req.body && req.body.initData);
   if (v.error) return res.status(v.error === 'tg_off' ? 503 : 401).json({ error: v.error });
-  const email = `tg_${v.id}@telegram.local`;
   try {
-    let [u] = await sql`SELECT id, email FROM users WHERE LOWER(email)=${email} LIMIT 1`;
-    if (!u) {
-      const hash = await bcrypt.hash(crypto.randomBytes(24).toString('hex'), 10);
-      [u] = await sql`INSERT INTO users (email, password_hash) VALUES (${email}, ${hash}) ON CONFLICT DO NOTHING RETURNING id, email`;
-      if (!u) [u] = await sql`SELECT id, email FROM users WHERE LOWER(email)=${email} LIMIT 1`;
-    } else {
-      await sql`UPDATE users SET last_login=NOW() WHERE id=${u.id}`;
-    }
+    // اگه این تلگرام به حساب سایت وصل شده باشه، همون حساب باز می‌شه (ژورنال مشترک)
+    const u = await userForTg(v.id);
+    await sql`UPDATE users SET last_login=NOW() WHERE id=${u.id}`;
     res.json({ token: sign(u.id), email: u.email });
   } catch (e) {
     console.error(e);
