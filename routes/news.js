@@ -155,7 +155,7 @@ function adminOk(req) {
 const router = express.Router();
 router.get('/', rateLimit({ windowMs: 60 * 1000, max: 60 }), async (req, res) => {
   const admin = adminOk(req);
-  if (!admin) { try { getAuth(req); } catch { return res.status(401).json({ error: 'unauthorized' }); } }
+  // اخبار برای همه بازه (ورود اختیاری است)؛ محدودیت نرخ بالا جلوی سوءاستفاده رو می‌گیره
   if (!cache.updatedAt) await Promise.race([refresh(), new Promise((r) => setTimeout(r, 8000))]);
   else if (Date.now() - cache.updatedAt > REFRESH_MS && !refreshing) refresh(); // a sleeping free server refreshes on the first visit
   if (!cache.updatedAt) return res.status(503).json({ error: 'unavailable', detail: admin ? state.lastError : undefined });
