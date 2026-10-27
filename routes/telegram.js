@@ -6,7 +6,7 @@ import crypto from 'crypto';
 import { createBot } from '../lib/bot.js';
 import { botStore, MAX_IMG } from '../lib/store.js';
 import adminDep from '../lib/botadmin.js';
-import { renderNews, renderSessions } from '../lib/render.js';
+import { renderNews, renderSessions, engineInfo } from '../lib/render.js';
 import { newsEvents, newsStatus, refresh as refreshNews } from './news.js';
 
 const router = express.Router();
@@ -71,7 +71,8 @@ const newsDep = {
     else if (st.ageMin != null && st.ageMin > 30) refreshNews();
   }
 };
-const getBot = () => bot || (bot = createBot({ store: botStore, tg: tgApi, appUrl: baseUrl(), botName: BOT_USER, admin: adminDep, news: newsDep, render: { news: renderNews, sessions: renderSessions } }));
+engineInfo().then((i) => console.log('image engine:', i.name || 'NONE', i.error || '')).catch(() => {});
+const getBot = () => bot || (bot = createBot({ store: botStore, tg: tgApi, appUrl: baseUrl(), botName: BOT_USER, admin: adminDep, news: newsDep, render: { news: renderNews, sessions: renderSessions, info: engineInfo } }));
 
 export async function setupTelegram() {
   if (!token()) return;
