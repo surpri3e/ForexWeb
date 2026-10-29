@@ -6,7 +6,8 @@ import crypto from 'crypto';
 import { createBot } from '../lib/bot.js';
 import { botStore, MAX_IMG } from '../lib/store.js';
 import adminDep from '../lib/botadmin.js';
-import { renderNews, renderSessions, engineInfo } from '../lib/render.js';
+import { renderNews, renderSessions, renderRates, engineInfo } from '../lib/render.js';
+import { getRates } from '../lib/rates.js';
 import { newsEvents, newsStatus, refresh as refreshNews } from './news.js';
 
 const router = express.Router();
@@ -72,7 +73,7 @@ const newsDep = {
   }
 };
 engineInfo().then((i) => console.log('image engine:', i.name || 'NONE', i.error || '')).catch(() => {});
-const getBot = () => bot || (bot = createBot({ store: botStore, tg: tgApi, appUrl: baseUrl(), botName: BOT_USER, admin: adminDep, news: newsDep, render: { news: renderNews, sessions: renderSessions, info: engineInfo } }));
+const getBot = () => bot || (bot = createBot({ store: botStore, tg: tgApi, appUrl: baseUrl(), botName: BOT_USER, admin: adminDep, news: newsDep, rates: { get: getRates }, render: { news: renderNews, sessions: renderSessions, rates: renderRates, info: engineInfo } }));
 
 export async function setupTelegram() {
   if (!token()) return;
@@ -84,6 +85,7 @@ export async function setupTelegram() {
     commands: [
       { command: 'menu', description: 'منوی اصلی' },
       { command: 'news', description: 'اخبار و سشن (تصویر)' },
+      { command: 'rates', description: 'نرخ ارز، طلا و ارز دیجیتال' },
       { command: 'today', description: 'ثبت سریع و وضعیت امروز' },
       { command: 'week', description: 'هفتهٔ جاری' },
       { command: 'stats', description: 'آمار' },
