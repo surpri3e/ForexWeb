@@ -5,7 +5,8 @@ import { rateLimit } from '../lib/limit.js';
 
 const router = express.Router();
 
-const DAILY_LIMIT = 3;
+const DAILY_LIMIT = 1;      // روزی یک پست
+const MONTHLY_LIMIT = 10;   // ماهی حداکثر ده پست (ماه شمسی)
 const RETENTION_DAYS = Math.max(1, parseInt(process.env.GLOBAL_RETENTION_DAYS || '7', 10));
 const MAX_POSTS = Math.max(100, parseInt(process.env.GLOBAL_MAX_POSTS || '1500', 10));
 const RESERVED = new Set(['admin', 'administrator', 'root', 'support', 'system', 'moderator', 'mod', 'staff', 'official', 'surpri3efx', 'surprisefx', 'null', 'undefined', 'api', '__proto__', 'constructor', 'prototype', 'tostring', 'hasownproperty']);
@@ -22,6 +23,32 @@ function tehranDayStart() {
   const off = 3.5 * 3600 * 1000;
   const t = Date.now() + off;
   return new Date(Math.floor(t / 86400000) * 86400000 - off);
+}
+
+// شروع ماه شمسی جاری به وقت تهران (برای سقف ماهانه)
+function tehranMonthStart() {
+  let d = 1;
+  try {
+    const parts = new Intl.DateTimeFormat('en-US-u-ca-persian-nu-latn', { timeZone: 'Asia/Tehran', day: 'numeric' }).formatToParts(new Date());
+    const p = parts.find((x) => x.type === 'day');
+    if (p) d = Math.min(31, Math.max(1, parseInt(p.value, 10) || 1));
+  } catch { /* بدون ICU کامل: روز اول ماه میلادی */ }
+  return new Date(tehranDayStart().getTime() - (d - 1) * 86400000);
+}
+// شمارش سهمیه از دفتر پست‌ها: روزانه با حذف پست برنمی‌گرده؛ ماهانه فقط با حذف دستی یک پست (وقتی سقف پر شده) یک جا باز می‌شه
+async function quota(uid) {
+  const day = tehranDayStart().toISOString();
+  const [a] = await sql`SELECT COUNT(*)::int AS n FROM post_log WHERE user_id = ${uid} AND created_at >= ${day}`;
+  const [b] = await sql`SELECT COUNT(*)::int AS n FROM posts WHERE user_id = ${uid} AND created_at >= ${day}`;
+  const mon = tehranMonthStart().toISOString();
+  const [m1] = await sql`SELECT COUNT(*)::int AS n FROM post_log WHERE user_id = ${uid} AND created_at >= ${mon}`;
+  const [m2] = await sql`SELECT COUNT(*)::int AS n FROM posts WHERE user_id = ${uid} AND created_at >= ${mon}`;
+  const m = { n: Math.max(m1.n, m2.n) };
+  const used = Math.max(a.n, b.n);
+  return {
+    today: { used, limit: DAILY_LIMIT, remaining: Math.max(0, DAILY_LIMIT - used) },
+    month: { used: m.n, limit: MONTHLY_LIMIT, remaining: Math.max(0, MONTHLY_LIMIT - m.n) }
+  };
 }
 
 // strict JPEG data-URL parsing: only baseline/progressive JPEG, size and dimensions bounded
@@ -88,10 +115,10 @@ router.get('/me', async (req, res) => {
   try {
     const uid = req.user.uid;
     const p = await myProfile(uid);
-    const [c] = await sql`SELECT COUNT(*)::int AS n FROM posts WHERE user_id = ${uid} AND created_at >= ${tehranDayStart().toISOString()}`;
+    const q = await quota(uid);
     const [f1] = await sql`SELECT COUNT(*)::int AS n FROM follows WHERE followee_id = ${uid}`;
     const [f2] = await sql`SELECT COUNT(*)::int AS n FROM follows WHERE follower_id = ${uid}`;
-    res.json({ profile: p ? { ...pubProfile(p), banned: !!p.banned } : null, today: { used: c.n, limit: DAILY_LIMIT, remaining: Math.max(0, DAILY_LIMIT - c.n) }, followers: f1.n, following: f2.n });
+    res.json({ profile: p ? { ...pubProfile(p), banned: !!p.banned } : null, today: q.today, month: q.month, followers: f1.n, following: f2.n });
   } catch (e) { console.error(e); res.status(500).json({ error: 'server' }); }
 });
 
@@ -204,10 +231,12 @@ router.post('/posts', rateLimit({ windowMs: 60 * 1000, max: 10, key: (r) => 'pos
     const body = clean(b.body, 500);
     const img = parseJpeg(b.image, 220 * 1024, 2400);
     if (!img) return res.status(400).json({ error: 'bad_image' });
-    const [c] = await sql`SELECT COUNT(*)::int AS n FROM posts WHERE user_id = ${uid} AND created_at >= ${tehranDayStart().toISOString()}`;
-    if (c.n >= DAILY_LIMIT) return res.status(429).json({ error: 'daily_limit', limit: DAILY_LIMIT });
+    const q = await quota(uid);
+    if (q.month.remaining <= 0) return res.status(429).json({ error: 'monthly_limit', limit: MONTHLY_LIMIT });
+    if (q.today.remaining <= 0) return res.status(429).json({ error: 'daily_limit', limit: DAILY_LIMIT });
     const [row] = await sql`INSERT INTO posts (user_id, symbol, bias, body, img_b64) VALUES (${uid}, ${symbol}, ${bias}, ${body}, ${img.b64}) RETURNING id`;
-    res.json({ id: row.id, remaining: Math.max(0, DAILY_LIMIT - c.n - 1) });
+    await sql`INSERT INTO post_log (user_id) VALUES (${uid})`;
+    res.json({ id: row.id, remaining: Math.max(0, q.today.remaining - 1), monthRemaining: Math.max(0, q.month.remaining - 1) });
   } catch (e) { console.error(e); res.status(500).json({ error: 'server' }); }
 });
 
@@ -216,7 +245,14 @@ function pid(req) { const id = parseInt(req.params.id, 10); return Number.isInte
 router.delete('/posts/:id', async (req, res) => {
   const id = pid(req); if (!id) return res.status(400).json({ error: 'bad_id' });
   try {
-    await sql`DELETE FROM posts WHERE id = ${id} AND user_id = ${req.user.uid}`;
+    // حذف پست فقط وقتی ممکنه که سقف ماهانه پر شده باشه (تا با «بگذار و پاک کن» دور زده نشه)
+    const q = await quota(req.user.uid);
+    if (q.month.remaining > 0) return res.status(403).json({ error: 'delete_locked' });
+    const gone = await sql`DELETE FROM posts WHERE id = ${id} AND user_id = ${req.user.uid} RETURNING id`;
+    if (gone.length) {
+      // یک جا توی سقف ماهانه باز می‌شه (قدیمی‌ترین ردیف این ماه از دفتر)
+      await sql`DELETE FROM post_log WHERE ctid IN (SELECT ctid FROM post_log WHERE user_id = ${req.user.uid} AND created_at >= ${tehranMonthStart().toISOString()} ORDER BY created_at LIMIT 1)`;
+    }
     res.json({ ok: true });
   } catch (e) { console.error(e); res.status(500).json({ error: 'server' }); }
 });
@@ -271,6 +307,7 @@ export async function pruneGlobal() {
   try {
     const cutoff = new Date(Date.now() - RETENTION_DAYS * 86400000).toISOString();
     await sql`DELETE FROM posts WHERE created_at < ${cutoff}`;
+    await sql`DELETE FROM post_log WHERE created_at < ${new Date(Date.now() - 40 * 86400000).toISOString()}`;
     await sql`DELETE FROM posts WHERE id <= (SELECT id FROM posts ORDER BY id DESC LIMIT 1 OFFSET ${MAX_POSTS})`;
   } catch (e) { console.error('prune failed:', e.message); }
 }
