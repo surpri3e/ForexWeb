@@ -14,6 +14,7 @@ import aiRoutes from './routes/ai.js';
 import telegramRoutes, { setupTelegram } from './routes/telegram.js';
 import syncRoutes from './routes/sync.js';
 import newsRoutes, { startNewsRefresh } from './routes/news.js';
+import ratesRoutes from './routes/rates.js';
 import { rateLimit } from './lib/limit.js';
 import { ensureSchema, getAuth, sql } from './lib/db.js';
 
@@ -63,6 +64,7 @@ app.use('/api/messages', messageRoutes);
 app.use('/api/support', express.json({ limit: '20kb' }), supportRoutes);
 app.use('/api/global', express.json({ limit: '600kb' }), globalRoutes);
 app.use('/api/news', newsRoutes);
+app.use('/api/rates', ratesRoutes);
 app.use('/api/ai', express.json({ limit: '60kb' }), aiRoutes);
 app.use('/api/telegram', telegramRoutes);
 app.use('/api/sync', syncRoutes);
