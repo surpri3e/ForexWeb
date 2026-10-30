@@ -2,6 +2,8 @@ import express from 'express';
 import crypto from 'crypto';
 import { sql } from '../lib/db.js';
 import { newsStatus, refresh as refreshNews, importFeed } from './news.js';
+import { groupsSvc, tgApi } from './telegram.js';
+import { getRates, ratesStatus, getManualUsd } from '../lib/rates.js';
 
 if (process.env.ADMIN_KEY && process.env.ADMIN_KEY.length < 24) console.warn('ADMIN_KEY is short; use 32+ random characters');
 const router = express.Router();
@@ -354,6 +356,52 @@ router.post('/news/import', async (req, res) => {
   } catch (e) {
     res.status(400).json({ error: 'bad_feed', detail: String((e && e.message) || e).slice(0, 80) });
   }
+});
+
+// ---------- ربات توی گروه‌ها: لیست، تنظیمات، ارسال دستی ----------
+router.get('/bot/groups', async (req, res) => {
+  try { res.json({ groups: await groupsSvc.list() }); } catch (e) { res.status(500).json({ error: 'server' }); }
+});
+router.post('/bot/groups/:id', async (req, res) => {
+  try {
+    if (!/^-?\d{5,20}$/.test(req.params.id)) return res.status(400).json({ error: 'bad_id' });
+    const g = await groupsSvc.update(req.params.id, req.body || {});
+    if (!g) return res.status(404).json({ error: 'not_found' });
+    res.json({ group: g });
+  } catch (e) { res.status(500).json({ error: 'server' }); }
+});
+router.post('/bot/groups/:id/send', async (req, res) => {
+  try {
+    if (!/^-?\d{5,20}$/.test(req.params.id)) return res.status(400).json({ error: 'bad_id' });
+    await groupsSvc.sendNow(req.params.id);
+    res.json({ ok: true });
+  } catch (e) {
+    const m = String((e && e.message) || e);
+    res.status(502).json({ error: /rates_unavailable/.test(m) ? 'rates_unavailable' : 'send_failed', detail: m.slice(0, 120) });
+  }
+});
+router.delete('/bot/groups/:id', async (req, res) => {
+  try {
+    if (!/^-?\d{5,20}$/.test(req.params.id)) return res.status(400).json({ error: 'bad_id' });
+    if (req.query.leave === '1') { try { await tgApi.leave(req.params.id); } catch { /* شاید قبلاً خارج شده */ } }
+    await groupsSvc.remove(req.params.id);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: 'server' }); }
+});
+// وضعیت منابع قیمت + نرخ دستی دلار (فقط وقتی منبع خودکار قطعه استفاده می‌شه)
+router.get('/rates/status', async (req, res) => {
+  try {
+    const d = await getRates({ force: req.query.force === '1' });
+    const usd = (d.fiat || []).find((x) => x.code === 'USD') || null;
+    res.json({ status: ratesStatus(), usd: usd ? { price: usd.price, manual: !!usd.manual } : null, counts: { fiat: d.fiat.length, gold: d.gold.length, crypto: d.crypto.length, usdt: !!d.usdt }, manual: getManualUsd() });
+  } catch (e) { res.status(500).json({ error: 'server' }); }
+});
+router.post('/rates/manual-usd', async (req, res) => {
+  try {
+    const v = (req.body || {}).price;
+    const m = await groupsSvc.saveManualUsd(v === '' || v == null ? 0 : v);
+    res.json({ ok: true, manual: m });
+  } catch (e) { res.status(500).json({ error: 'server' }); }
 });
 
 export default router;
