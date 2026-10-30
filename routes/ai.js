@@ -2,7 +2,7 @@
 import express from 'express';
 import { getAuth } from '../lib/db.js';
 import { rateLimit } from '../lib/limit.js';
-import { askAi, aiStatus, getAiConfig, currentModel } from '../lib/ai.js';
+import { askAi, aiStatus, getAiConfig, currentModel } from '../lib/aicore.js';
 
 const router = express.Router();
 const ENDPOINT = (m) => `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(m)}:generateContent`;
