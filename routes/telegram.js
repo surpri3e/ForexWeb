@@ -8,6 +8,7 @@ import { botStore, MAX_IMG } from '../lib/store.js';
 import adminDep from '../lib/botadmin.js';
 import { renderNews, renderSessions, renderRates, engineInfo } from '../lib/render.js';
 import { getRates } from '../lib/rates.js';
+import { createGroups } from '../lib/groups.js';
 import { newsEvents, newsStatus, refresh as refreshNews } from './news.js';
 
 const router = express.Router();
@@ -49,6 +50,7 @@ export const tgApi = {
     if (!j.ok) throw new Error('sendPhoto: ' + (j.description || r.status));
     return j.result;
   },
+  leave: (chat) => api('leaveChat', { chat_id: chat }),
   async sendDoc(chat, filename, buf, caption) {
     const f = new FormData();
     f.append('chat_id', String(chat));
@@ -73,19 +75,22 @@ const newsDep = {
   }
 };
 engineInfo().then((i) => console.log('image engine:', i.name || 'NONE', i.error || '')).catch(() => {});
-const getBot = () => bot || (bot = createBot({ store: botStore, tg: tgApi, appUrl: baseUrl(), botName: BOT_USER, admin: adminDep, news: newsDep, rates: { get: getRates }, render: { news: renderNews, sessions: renderSessions, rates: renderRates, info: engineInfo } }));
+// گروه‌ها: جواب به نرخ ارز + ارسال خودکار (تنظیمش از پنل ادمین)
+export const groupsSvc = createGroups({ tg: tgApi, render: { rates: renderRates }, botName: () => BOT_USER });
+const getBot = () => bot || (bot = createBot({ groups: groupsSvc, store: botStore, tg: tgApi, appUrl: baseUrl(), botName: BOT_USER, admin: adminDep, news: newsDep, rates: { get: getRates }, render: { news: renderNews, sessions: renderSessions, rates: renderRates, info: engineInfo } }));
 
 export async function setupTelegram() {
   if (!token()) return;
   const me = await api('getMe', {}).catch(() => null);
   if (me && me.username) BOT_USER = me.username;
-  await api('setWebhook', { url: baseUrl() + '/api/telegram/webhook', secret_token: secret(), allowed_updates: ['message', 'callback_query'] });
+  await api('setWebhook', { url: baseUrl() + '/api/telegram/webhook', secret_token: secret(), allowed_updates: ['message', 'callback_query', 'my_chat_member'] });
   await api('setChatMenuButton', { menu_button: { type: 'web_app', text: 'ژورنال', web_app: { url: baseUrl() } } });
   await api('setMyCommands', {
     commands: [
       { command: 'menu', description: 'منوی اصلی' },
       { command: 'news', description: 'اخبار و سشن (تصویر)' },
-      { command: 'rates', description: 'نرخ ارز، طلا و ارز دیجیتال' },
+      { command: 'rates', description: 'نرخ ارز و طلا' },
+      { command: 'crypto', description: 'تاپ ۱۰ ارز دیجیتال' },
       { command: 'today', description: 'ثبت سریع و وضعیت امروز' },
       { command: 'week', description: 'هفتهٔ جاری' },
       { command: 'stats', description: 'آمار' },
@@ -101,6 +106,9 @@ export async function setupTelegram() {
       { command: 'help', description: 'راهنما' }
     ]
   }).catch(() => {});
+  await api('setMyCommands', { scope: { type: 'all_group_chats' }, commands: [{ command: 'rates', description: 'نرخ ارز، طلا و ارز دیجیتال' }, { command: 'crypto', description: 'تاپ ۱۰ ارز دیجیتال' }] }).catch(() => {});
+  await groupsSvc.loadSettings();
+  groupsSvc.start();
   console.log('telegram bot ready' + (BOT_USER ? ' @' + BOT_USER : ''));
 }
 
@@ -118,7 +126,7 @@ async function handle(u) {
   try { await getBot().handleUpdate(u); }
   catch (e) {
     console.error('bot error:', e && e.stack || e);
-    const chat = (u.message && u.message.chat && u.message.chat.id) || (u.callback_query && u.callback_query.message && u.callback_query.message.chat.id);
+    const chat = (u.message && u.message.chat && u.message.chat.type === 'private' && u.message.chat.id) || (u.callback_query && u.callback_query.message && u.callback_query.message.chat.id);
     if (chat) tgApi.send(chat, 'مشکلی پیش اومد؛ چند لحظه بعد دوباره امتحان کن.', { inline_keyboard: [[{ text: 'منو', callback_data: 'm' }]] }).catch(() => {});
   }
 }
@@ -127,7 +135,7 @@ router.post('/webhook', express.json({ limit: '200kb' }), (req, res) => {
   if (!token() || req.get('x-telegram-bot-api-secret-token') !== secret()) return res.sendStatus(401);
   res.sendStatus(200);
   const u = req.body || {};
-  const from = (u.message && u.message.from) || (u.callback_query && u.callback_query.from);
+  const from = (u.message && u.message.from) || (u.callback_query && u.callback_query.from) || (u.my_chat_member && u.my_chat_member.from);
   if (!from) return;
   enqueue(String(from.id), () => handle(u));
 });
