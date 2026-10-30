@@ -17,7 +17,7 @@ import newsRoutes, { startNewsRefresh } from './routes/news.js';
 import ratesRoutes from './routes/rates.js';
 import { rateLimit } from './lib/limit.js';
 import { ensureSchema, getAuth, sql } from './lib/db.js';
-import { loadAiConfig } from './lib/ai.js';
+import { loadAiConfig } from './lib/aicore.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
