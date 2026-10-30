@@ -4,6 +4,8 @@ import { sql } from '../lib/db.js';
 import { newsStatus, refresh as refreshNews, importFeed } from './news.js';
 import { groupsSvc, tgApi } from './telegram.js';
 import { getRates, ratesStatus, getManualUsd } from '../lib/rates.js';
+import { aiStatus, getAiConfig, setAiConfig, verifyKey, pingModel } from '../lib/ai.js';
+import { setEnv, renderConfigured } from '../lib/envsync.js';
 
 if (process.env.ADMIN_KEY && process.env.ADMIN_KEY.length < 24) console.warn('ADMIN_KEY is short; use 32+ random characters');
 const router = express.Router();
@@ -402,6 +404,27 @@ router.post('/rates/manual-usd', async (req, res) => {
     const m = await groupsSvc.saveManualUsd(v === '' || v == null ? 0 : v);
     res.json({ ok: true, manual: m });
   } catch (e) { res.status(500).json({ error: 'server' }); }
+});
+
+// ---------- هوش مصنوعی: وضعیت، سقف‌ها و کلید (همان چیزی که از ربات هم کنترل می‌شه) ----------
+const aiView = () => ({ status: aiStatus(), config: getAiConfig(), render: renderConfigured() });
+router.get('/ai', (req, res) => res.json(aiView()));
+router.post('/ai', async (req, res) => {
+  try { await setAiConfig(req.body || {}); res.json(aiView()); } catch (e) { res.status(500).json({ error: 'server' }); }
+});
+router.post('/ai/key', async (req, res) => {
+  try {
+    const key = String((req.body || {}).key || '').trim().replace(/\s+/g, '');
+    if (!key) { const r = await setEnv('GEMINI_API_KEY', ''); return res.json(Object.assign(aiView(), { persisted: r.persisted })); }
+    if (!/^[A-Za-z0-9_-]{20,120}$/.test(key)) return res.status(400).json({ error: 'bad_key' });
+    const v = await verifyKey(key);
+    if (!v.ok) return res.status(400).json({ error: 'key_rejected', status: v.status || 0 });
+    const r = await setEnv('GEMINI_API_KEY', key);
+    res.json(Object.assign(aiView(), { persisted: r.persisted, reason: r.reason || '' }));
+  } catch (e) { res.status(500).json({ error: 'server' }); }
+});
+router.post('/ai/test', async (req, res) => {
+  try { res.json(await pingModel()); } catch (e) { res.status(500).json({ error: 'server' }); }
 });
 
 export default router;
