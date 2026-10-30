@@ -26,7 +26,8 @@ async function api(method, body) {
 }
 const base = { parse_mode: 'HTML', disable_web_page_preview: true };
 export const tgApi = {
-  send: (chat, text, kb) => api('sendMessage', Object.assign({ chat_id: chat, text: String(text).slice(0, 4000) }, base, kb ? { reply_markup: kb } : {})),
+  send: (chat, text, kb, extra) => api('sendMessage', Object.assign({ chat_id: chat, text: String(text).slice(0, 4000) }, base, kb ? { reply_markup: kb } : {}, extra || {})),
+  action: (chat, act) => api('sendChatAction', { chat_id: chat, action: act }),
   edit: (chat, id, text, kb) => api('editMessageText', Object.assign({ chat_id: chat, message_id: id, text: String(text).slice(0, 4000) }, base, kb ? { reply_markup: kb } : {})),
   del: (chat, id) => api('deleteMessage', { chat_id: chat, message_id: id }),
   answer: (id, text) => api('answerCallbackQuery', Object.assign({ callback_query_id: id }, text ? { text: String(text).slice(0, 190) } : {})),
@@ -100,13 +101,14 @@ export async function setupTelegram() {
       { command: 'backtest', description: 'ساخت بکتست' },
       { command: 'accounts', description: 'حساب‌های ژورنال' },
       { command: 'csv', description: 'خروجی CSV' },
+      { command: 'ai', description: 'دستیار هوش مصنوعی' },
       { command: 'settings', description: 'تنظیمات' },
       { command: 'link', description: 'اتصال به حساب سایت' },
       { command: 'id', description: 'شناسهٔ عددی تلگرام من' },
       { command: 'help', description: 'راهنما' }
     ]
   }).catch(() => {});
-  await api('setMyCommands', { scope: { type: 'all_group_chats' }, commands: [{ command: 'rates', description: 'نرخ ارز، طلا و ارز دیجیتال' }, { command: 'crypto', description: 'تاپ ۱۰ ارز دیجیتال' }] }).catch(() => {});
+  await api('setMyCommands', { scope: { type: 'all_group_chats' }, commands: [{ command: 'rates', description: 'نرخ ارز، طلا و ارز دیجیتال' }, { command: 'crypto', description: 'تاپ ۱۰ ارز دیجیتال' }, { command: 'ai', description: 'پرسش از هوش مصنوعی' }] }).catch(() => {});
   await groupsSvc.loadSettings();
   groupsSvc.start();
   console.log('telegram bot ready' + (BOT_USER ? ' @' + BOT_USER : ''));
