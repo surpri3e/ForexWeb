@@ -4,7 +4,7 @@ import { sql } from '../lib/db.js';
 import { newsStatus, refresh as refreshNews, importFeed } from './news.js';
 import { groupsSvc, tgApi } from './telegram.js';
 import { getRates, ratesStatus, getManualUsd } from '../lib/rates.js';
-import { aiStatus, getAiConfig, setAiConfig, verifyKey, pingModel } from '../lib/ai.js';
+import { aiStatus, getAiConfig, setAiConfig, verifyKey, pingModel } from '../lib/aicore.js';
 import { setEnv, renderConfigured } from '../lib/envsync.js';
 
 if (process.env.ADMIN_KEY && process.env.ADMIN_KEY.length < 24) console.warn('ADMIN_KEY is short; use 32+ random characters');
