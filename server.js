@@ -17,6 +17,7 @@ import newsRoutes, { startNewsRefresh } from './routes/news.js';
 import ratesRoutes from './routes/rates.js';
 import { rateLimit } from './lib/limit.js';
 import { ensureSchema, getAuth, sql } from './lib/db.js';
+import { loadAiConfig } from './lib/ai.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -84,6 +85,7 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 3000;
 try { await ensureSchema(); } catch (e) { console.error('schema setup failed:', e); }
+try { await loadAiConfig(); } catch (e) { console.error('ai config load failed:', e && e.message); }
 app.listen(PORT, () => {
   console.log(`Server running on ${PORT}`);
   startNewsRefresh().catch((e) => console.error('news start failed:', e.message));
