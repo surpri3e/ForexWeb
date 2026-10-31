@@ -12,7 +12,7 @@ function auth(req, res, next) {
   catch { res.status(401).json({ error: 'unauthorized' }); }
 }
 
-const REASON = { off: [503, 'ai_off'], disabled: [403, 'ai_disabled'], daily: [429, 'daily_limit'], cooldown: [429, 'ai_busy'], ai_busy: [429, 'ai_busy'], bad_request: [400, 'bad_request'], ai_timeout: [504, 'ai_timeout'], ai_empty: [502, 'ai_empty'], ai_failed: [502, 'ai_failed'] };
+const REASON = { off: [503, 'ai_off'], disabled: [403, 'ai_disabled'], daily: [429, 'daily_limit'], cooldown: [429, 'ai_busy'], ai_busy: [429, 'ai_busy'], bad_request: [400, 'bad_request'], ai_timeout: [504, 'ai_timeout'], ai_empty: [502, 'ai_empty'], ai_failed: [502, 'ai_failed'], ai_key: [502, 'ai_key'], ai_model: [502, 'ai_model'], ai_region: [502, 'ai_region'] };
 
 router.post('/chat', auth,
   rateLimit({ windowMs: 10 * 60 * 1000, max: 25, key: (r) => 'ai' + (r.user && r.user.uid) }),
