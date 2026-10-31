@@ -7,7 +7,7 @@ import { createBot } from '../lib/bot.js';
 import { botStore, MAX_IMG } from '../lib/store.js';
 import adminDep from '../lib/botadmin.js';
 import { renderNews, renderSessions, renderRates, engineInfo } from '../lib/render.js';
-import { getRates } from '../lib/rates.js';
+import { getRates, getRatesConfig, ratesStatus } from '../lib/rates.js';
 import { createGroups } from '../lib/groups.js';
 import { newsEvents, newsStatus, refresh as refreshNews } from './news.js';
 
@@ -78,7 +78,7 @@ const newsDep = {
 engineInfo().then((i) => console.log('image engine:', i.name || 'NONE', i.error || '')).catch(() => {});
 // گروه‌ها: جواب به نرخ ارز + ارسال خودکار (تنظیمش از پنل ادمین)
 export const groupsSvc = createGroups({ tg: tgApi, render: { rates: renderRates }, botName: () => BOT_USER });
-const getBot = () => bot || (bot = createBot({ groups: groupsSvc, store: botStore, tg: tgApi, appUrl: baseUrl(), botName: BOT_USER, admin: adminDep, news: newsDep, rates: { get: getRates }, render: { news: renderNews, sessions: renderSessions, rates: renderRates, info: engineInfo } }));
+const getBot = () => bot || (bot = createBot({ groups: groupsSvc, store: botStore, tg: tgApi, appUrl: baseUrl(), botName: BOT_USER, admin: adminDep, news: newsDep, rates: { get: getRates, cfg: getRatesConfig, set: (p) => groupsSvc.saveRatesConfig(p), status: ratesStatus, setUsd: (v) => groupsSvc.saveManualUsd(v) }, render: { news: renderNews, sessions: renderSessions, rates: renderRates, info: engineInfo } }));
 
 export async function setupTelegram() {
   if (!token()) return;
