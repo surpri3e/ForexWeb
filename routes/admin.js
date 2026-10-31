@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import { sql } from '../lib/db.js';
 import { newsStatus, refresh as refreshNews, importFeed } from './news.js';
 import { groupsSvc, tgApi } from './telegram.js';
-import { getRates, ratesStatus, getManualUsd } from '../lib/rates.js';
+import { getRates, ratesStatus, getManualUsd, getRatesConfig, CATALOG, FIAT_LIST, GOLD_LIST } from '../lib/rates.js';
 import { aiStatus, getAiConfig, setAiConfig, verifyKey, pingModel } from '../lib/aicore.js';
 import { setEnv, renderConfigured } from '../lib/envsync.js';
 
@@ -397,6 +397,10 @@ router.get('/rates/status', async (req, res) => {
     const usd = (d.fiat || []).find((x) => x.code === 'USD') || null;
     res.json({ status: ratesStatus(), usd: usd ? { price: usd.price, manual: !!usd.manual } : null, counts: { fiat: d.fiat.length, gold: d.gold.length, crypto: d.crypto.length, usdt: !!d.usdt }, manual: getManualUsd() });
   } catch (e) { res.status(500).json({ error: 'server' }); }
+});
+router.get('/rates/config', (req, res) => res.json({ config: getRatesConfig(), catalog: CATALOG.map((x) => [x[0], x[1]]), fiat: FIAT_LIST, gold: GOLD_LIST }));
+router.post('/rates/config', async (req, res) => {
+  try { res.json({ config: await groupsSvc.saveRatesConfig(req.body || {}) }); } catch (e) { res.status(500).json({ error: 'server' }); }
 });
 router.post('/rates/manual-usd', async (req, res) => {
   try {
