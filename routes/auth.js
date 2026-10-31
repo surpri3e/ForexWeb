@@ -5,6 +5,7 @@ import crypto from 'crypto';
 import { sql, getAuth } from '../lib/db.js';
 import { userForTg } from '../lib/store.js';
 import { rateLimit } from '../lib/limit.js';
+import { tgApi } from './telegram.js';
 
 const router = express.Router();
 const DUMMY_HASH = bcrypt.hashSync('timing-dummy', 10); // equalizes timing when the email does not exist
@@ -99,6 +100,42 @@ router.post('/telegram', async (req, res) => {
     console.error(e);
     res.status(500).json({ error: 'server' });
   }
+});
+
+// ---- فراموشی رمز: کد ۶ رقمی به تلگرامِ وصل‌شده به حساب فرستاده می‌شه ----
+const codeHash = (uid, code) => crypto.createHash('sha256').update(uid + ':' + code + ':' + process.env.JWT_SECRET).digest('hex');
+router.post('/forgot', rateLimit({ windowMs: 15 * 60 * 1000, max: 4, key: (req) => 'fg' + req.ip + ':' + normEmail(req.body && req.body.email) }), async (req, res) => {
+  const email = normEmail(req.body && req.body.email);
+  if (!email) return res.status(400).json({ error: 'missing' });
+  try {
+    const [u] = await sql`SELECT id FROM users WHERE LOWER(email)=${email} ORDER BY id LIMIT 1`;
+    if (u) {
+      const links = await sql`SELECT tg_id FROM tg_links WHERE user_id=${u.id}`;
+      if (links.length) {
+        const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+        await sql`INSERT INTO password_resets (user_id, code_hash, expires_at, tries) VALUES (${u.id}, ${codeHash(u.id, code)}, NOW() + INTERVAL '10 minutes', 0)
+          ON CONFLICT (user_id) DO UPDATE SET code_hash = EXCLUDED.code_hash, expires_at = EXCLUDED.expires_at, tries = 0`;
+        for (const l of links) { try { await tgApi.send(l.tg_id, '<b>بازیابی رمز Surpri3eFX</b>\nکد تو: <code>' + code + '</code>\nتا ۱۰ دقیقه معتبره. اگه تو درخواست ندادی، نادیده‌اش بگیر.'); } catch (e) { console.error('reset send:', e && e.message); } }
+      }
+    }
+    res.json({ ok: true }); // همیشه یک جواب؛ معلوم نمی‌شه ایمیل وجود داره یا نه
+  } catch (e) { console.error(e); res.status(500).json({ error: 'server' }); }
+});
+router.post('/reset', rateLimit({ windowMs: 15 * 60 * 1000, max: 12, key: (req) => 'rs' + req.ip }), async (req, res) => {
+  const email = normEmail(req.body && req.body.email), code = String((req.body && req.body.code) || '').replace(/\D/g, ''), password = req.body && req.body.password;
+  if (!email || code.length !== 6 || typeof password !== 'string') return res.status(400).json({ error: 'missing' });
+  if (password.length < 8 || Buffer.byteLength(password) > 72) return res.status(400).json({ error: 'weak_password' });
+  try {
+    const [u] = await sql`SELECT id FROM users WHERE LOWER(email)=${email} ORDER BY id LIMIT 1`;
+    const [r] = u ? await sql`SELECT code_hash, tries, expires_at > NOW() AS live FROM password_resets WHERE user_id=${u.id}` : [];
+    if (!r || !r.live || r.tries >= 5) return res.status(400).json({ error: 'bad_code' });
+    const a = Buffer.from(codeHash(u.id, code), 'hex'), b = Buffer.from(r.code_hash, 'hex');
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) { await sql`UPDATE password_resets SET tries = tries + 1 WHERE user_id=${u.id}`; return res.status(400).json({ error: 'bad_code' }); }
+    const hash = await bcrypt.hash(password, 10);
+    await sql`UPDATE users SET password_hash=${hash} WHERE id=${u.id}`;
+    await sql`DELETE FROM password_resets WHERE user_id=${u.id}`;
+    res.json({ ok: true });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'server' }); }
 });
 
 router.post('/logout', (req, res) => res.json({ ok: true }));
