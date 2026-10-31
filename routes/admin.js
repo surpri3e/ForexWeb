@@ -379,7 +379,8 @@ router.post('/bot/groups/:id/send', async (req, res) => {
     res.json({ ok: true });
   } catch (e) {
     const m = String((e && e.message) || e);
-    res.status(502).json({ error: /rates_unavailable/.test(m) ? 'rates_unavailable' : 'send_failed', detail: m.slice(0, 120) });
+    const g2 = await groupsSvc.get(req.params.id).catch(() => null);
+    res.status(502).json({ error: /rates_unavailable/.test(m) ? 'rates_unavailable' : 'send_failed', detail: String((g2 && g2.err) || m).slice(0, 160) });
   }
 });
 router.delete('/bot/groups/:id', async (req, res) => {
