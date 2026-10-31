@@ -52,6 +52,19 @@ export const tgApi = {
     return j.result;
   },
   leave: (chat) => api('leaveChat', { chat_id: chat }),
+  editMarkup: (chat, id, kb) => api('editMessageReplyMarkup', { chat_id: chat, message_id: id, reply_markup: kb }),
+  editCaption: (chat, id, caption, kb) => api('editMessageCaption', Object.assign({ chat_id: chat, message_id: id, caption: String(caption).slice(0, 1000), parse_mode: 'HTML' }, kb ? { reply_markup: kb } : {})),
+  async editPhoto(chat, id, buf, caption, kb) {
+    const f = new FormData();
+    f.append('chat_id', String(chat)); f.append('message_id', String(id));
+    f.append('media', JSON.stringify({ type: 'photo', media: 'attach://photo', caption: String(caption || '').slice(0, 1000), parse_mode: 'HTML' }));
+    if (kb) f.append('reply_markup', JSON.stringify(kb));
+    f.append('photo', new Blob([buf], { type: 'image/png' }), 'surpri3efx.png');
+    const r = await fetch(`https://api.telegram.org/bot${token()}/editMessageMedia`, { method: 'POST', body: f });
+    const j = await r.json().catch(() => ({}));
+    if (!j.ok) { const e = new Error('editMessageMedia: ' + (j.description || r.status)); e.code = j.error_code; throw e; }
+    return j.result;
+  },
   async sendDoc(chat, filename, buf, caption) {
     const f = new FormData();
     f.append('chat_id', String(chat));
@@ -82,17 +95,20 @@ const getBot = () => bot || (bot = createBot({ groups: groupsSvc, store: botStor
 
 export async function setupTelegram() {
   if (!token()) return;
-  const me = await api('getMe', {}).catch(() => null);
-  if (me && me.username) BOT_USER = me.username;
-  await api('setWebhook', { url: baseUrl() + '/api/telegram/webhook', secret_token: secret(), allowed_updates: ['message', 'callback_query', 'my_chat_member'] });
-  await api('setChatMenuButton', { menu_button: { type: 'web_app', text: 'ژورنال', web_app: { url: baseUrl() } } });
-  await api('setMyCommands', {
+  // اول تنظیمات و ارسال خودکار بالا میاد؛ خطا توی هر مرحلهٔ تلگرام جلوی بقیه رو نمی‌گیره
+  try { await groupsSvc.loadSettings(); } catch (e) { console.error('groups settings load failed:', e && e.message); }
+  groupsSvc.start();
+  const step = async (name, fn) => { try { await fn(); } catch (e) { console.error('telegram setup ' + name + ' failed:', e && e.message); } };
+  await step('getMe', async () => { const me = await api('getMe', {}); if (me && me.username) BOT_USER = me.username; });
+  await step('setWebhook', () => api('setWebhook', { url: baseUrl() + '/api/telegram/webhook', secret_token: secret(), allowed_updates: ['message', 'callback_query', 'my_chat_member'] }));
+  await step('menuButton', () => api('setChatMenuButton', { menu_button: { type: 'web_app', text: 'ژورنال', web_app: { url: baseUrl() } } }));
+  await step('commands', () => api('setMyCommands', {
     commands: [
       { command: 'menu', description: 'منوی اصلی' },
       { command: 'news', description: 'اخبار و سشن (تصویر)' },
       { command: 'rates', description: 'نرخ ارز و طلا' },
       { command: 'crypto', description: 'تاپ ۱۰ ارز دیجیتال' },
-      { command: 'today', description: 'ثبت سریع و وضعیت امروز' },
+      { command: 'today', description: 'وضعیت و ثبت امروز' },
       { command: 'week', description: 'هفتهٔ جاری' },
       { command: 'stats', description: 'آمار' },
       { command: 'review', description: 'مرور پایان هفته' },
@@ -107,10 +123,8 @@ export async function setupTelegram() {
       { command: 'id', description: 'شناسهٔ عددی تلگرام من' },
       { command: 'help', description: 'راهنما' }
     ]
-  }).catch(() => {});
-  await api('setMyCommands', { scope: { type: 'all_group_chats' }, commands: [{ command: 'rates', description: 'نرخ ارز، طلا و ارز دیجیتال' }, { command: 'crypto', description: 'تاپ ۱۰ ارز دیجیتال' }, { command: 'ai', description: 'پرسش از هوش مصنوعی' }] }).catch(() => {});
-  await groupsSvc.loadSettings();
-  groupsSvc.start();
+  })).catch(() => {});
+  await step('groupCommands', () => api('setMyCommands', { scope: { type: 'all_group_chats' }, commands: [{ command: 'rates', description: 'نرخ ارز، طلا و ارز دیجیتال' }, { command: 'crypto', description: 'تاپ ۱۰ ارز دیجیتال' }, { command: 'ai', description: 'پرسش از هوش مصنوعی' }] }));
   console.log('telegram bot ready' + (BOT_USER ? ' @' + BOT_USER : ''));
 }
 
