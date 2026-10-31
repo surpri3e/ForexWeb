@@ -17,7 +17,7 @@ import newsRoutes, { startNewsRefresh } from './routes/news.js';
 import ratesRoutes from './routes/rates.js';
 import { rateLimit } from './lib/limit.js';
 import { ensureSchema, getAuth, sql } from './lib/db.js';
-import { loadAiConfig } from './lib/aicore.js';
+import { loadAiConfig, loadAiUsage } from './lib/aicore.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -72,7 +72,6 @@ app.use('/api/sync', syncRoutes);
 
 app.get('/healthz', (req, res) => res.json({ ok: true }));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
-app.get('/ai-test', (req, res) => res.sendFile(path.join(__dirname, 'ai-test.html')));
 app.get('/index.html', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 
 // JSON errors (body too large / bad JSON) instead of an HTML stack page
@@ -85,7 +84,7 @@ app.use((err, req, res, next) => {
 
 const PORT = process.env.PORT || 3000;
 try { await ensureSchema(); } catch (e) { console.error('schema setup failed:', e); }
-try { await loadAiConfig(); } catch (e) { console.error('ai config load failed:', e && e.message); }
+try { await loadAiConfig(); await loadAiUsage(); } catch (e) { console.error('ai config load failed:', e && e.message); }
 app.listen(PORT, () => {
   console.log(`Server running on ${PORT}`);
   startNewsRefresh().catch((e) => console.error('news start failed:', e.message));
