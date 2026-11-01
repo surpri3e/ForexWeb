@@ -22,6 +22,7 @@ const UAS = [
 
 let cache = { events: [], updatedAt: 0, source: 'none' };
 let state = { lastError: null, failCount: 0, lastTry: 0 };
+let nextInfo = { count: 0, error: null, at: 0 }; // وضعیت آخرین گرفتن اخبار هفتهٔ بعد
 let refreshing = null;
 let retryTimer = null;
 
@@ -107,9 +108,13 @@ export function refresh() {
     try {
       const thisWeek = normalize(await fetchWeek('ff_calendar_thisweek.json'));
       if (thisWeek.length < 5) throw new Error('too_few_events');
+      // هفتهٔ بعد: فید فقط وقتی منتشر شده که فورکس‌فکتوری گذاشته باشه (معمولاً از اواخر هفته). اگه الان نشد، قبلی‌هایی که داشتیم نگه داشته می‌شن.
       let nextWeek = [];
-      try { nextWeek = normalize(await fetchWeek('ff_calendar_nextweek.json')); } catch { /* next week is not always published */ }
+      try { nextWeek = normalize(await fetchWeek('ff_calendar_nextweek.json')); nextInfo = { count: nextWeek.length, error: null, at: Date.now() }; }
+      catch (e) { nextInfo = { count: 0, error: String((e && e.message) || e), at: Date.now() }; }
       const map = new Map();
+      const keepFrom = Date.now() - 8 * 24 * 3600e3;
+      cache.events.forEach((e) => { if (e.d >= keepFrom) map.set(e.id, e); }); // قبلی‌ها (مثلاً هفتهٔ بعدی که قبلاً گرفتیم)
       [...thisWeek, ...nextWeek].forEach((e) => map.set(e.id, e));
       cache = { events: [...map.values()].sort((a, b) => a.d - b.d), updatedAt: Date.now(), source: 'auto' };
       state = { lastError: null, failCount: 0, lastTry: state.lastTry };
@@ -135,7 +140,7 @@ export async function importFeed(raw) {
 
 export function newsStatus() {
   const age = cache.updatedAt ? Date.now() - cache.updatedAt : null;
-  return { count: cache.events.length, updatedAt: Math.floor(cache.updatedAt / 1000), ageMin: age === null ? null : Math.floor(age / 60000), source: cache.source, stale: age === null ? null : age > STALE_MS, lastError: state.lastError, failCount: state.failCount, lastTry: Math.floor(state.lastTry / 1000), mirrors: BASES };
+  return { count: cache.events.length, updatedAt: Math.floor(cache.updatedAt / 1000), ageMin: age === null ? null : Math.floor(age / 60000), source: cache.source, stale: age === null ? null : age > STALE_MS, lastError: state.lastError, failCount: state.failCount, lastTry: Math.floor(state.lastTry / 1000), mirrors: BASES, nextCount: cache.events.filter((e) => e.d > Date.now() + 3 * 24 * 3600e3).length, nextError: nextInfo.error, nextTry: Math.floor(nextInfo.at / 1000) };
 }
 export function newsEvents() { return cache.events; }
 
@@ -172,3 +177,4 @@ router.get('/', rateLimit({ windowMs: 60 * 1000, max: 60 }), async (req, res) =>
 });
 
 export default router;
+// END-OF-FILE news.js
