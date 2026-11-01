@@ -151,13 +151,13 @@ async function handle(u) {
 }
 
 router.post('/webhook', express.json({ limit: '200kb' }), (req, res) => {
-  if (!token() || req.get('x-telegram-bot-api-secret-token') !== secret()) { hook.rejected++; console.error('telegram webhook rejected (secret mismatch or no token)'); return res.sendStatus(401); }
+  if (!token() || req.get('x-telegram-bot-api-secret-token') !== secret()) { hook.rejected++; console.error('telegram webhook rejected (secret mismatch or no token); token set:', !!token()); forceWebhook(); return res.sendStatus(401); }
   res.sendStatus(200);
   const u = req.body || {};
-  hook.hits++; hook.lastAt = Date.now();
-  console.log('tg update', Object.keys(u).filter((k) => k !== 'update_id').join(','), 'from', from.id, u.message && u.message.chat ? u.message.chat.type : '');
   const from = (u.message && u.message.from) || (u.callback_query && u.callback_query.from) || (u.my_chat_member && u.my_chat_member.from);
   if (!from) return;
+  hook.hits++; hook.lastAt = Date.now();
+  console.log('tg update', Object.keys(u).filter((k) => k !== 'update_id').join(','), 'from', from.id, u.message && u.message.chat ? u.message.chat.type : '');
   enqueue(String(from.id), () => handle(u));
 });
 
@@ -179,6 +179,14 @@ router.get('/diag', async (req, res) => {
   res.json(out);
 });
 
+// اگه تلگرام با سکرت قدیمی/اشتباه درخواست بفرسته، وب‌هوک فوراً با سکرت درست دوباره ثبت می‌شه (حداکثر هر ۳۰ ثانیه یک بار)
+let lastForce = 0;
+async function forceWebhook() {
+  if (!token() || Date.now() - lastForce < 30000) return;
+  lastForce = Date.now();
+  try { await api('setWebhook', { url: baseUrl() + '/api/telegram/webhook', secret_token: secret(), allowed_updates: ['message', 'callback_query', 'my_chat_member'] }); console.log('webhook re-registered after rejected request'); }
+  catch (e) { console.error('webhook re-register failed:', e && e.message); }
+}
 // اگه وب‌هوک یه جای دیگه افتاد یا پاک شد، خودش دوباره ثبتش می‌کنه
 let healTimer = null;
 async function healWebhook() {
