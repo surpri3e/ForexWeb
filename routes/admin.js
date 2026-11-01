@@ -4,7 +4,7 @@ import { sql } from '../lib/db.js';
 import { newsStatus, refresh as refreshNews, importFeed } from './news.js';
 import { groupsSvc, tgApi } from './telegram.js';
 import { getRates, ratesStatus, getManualUsd, getRatesConfig, CATALOG, FIAT_LIST, GOLD_LIST } from '../lib/rates.js';
-import { aiStatus, getAiConfig, setAiConfig, verifyKey, pingModel } from '../lib/aicore.js';
+import { aiStatus, getAiConfig, setAiConfig, verifyKey, pingModel, keyKind, envNameFor } from '../lib/aicore.js';
 import { setEnv, renderConfigured } from '../lib/envsync.js';
 
 if (process.env.ADMIN_KEY && process.env.ADMIN_KEY.length < 24) console.warn('ADMIN_KEY is short; use 32+ random characters');
@@ -420,11 +420,11 @@ router.post('/ai', async (req, res) => {
 router.post('/ai/key', async (req, res) => {
   try {
     const key = String((req.body || {}).key || '').trim().replace(/\s+/g, '');
-    if (!key) { const r = await setEnv('GEMINI_API_KEY', ''); return res.json(Object.assign(aiView(), { persisted: r.persisted })); }
+    if (!key) { const r = await setEnv('GROQ_API_KEY', ''); await setEnv('GEMINI_API_KEY', ''); return res.json(Object.assign(aiView(), { persisted: r.persisted })); }
     if (!/^[A-Za-z0-9_-]{20,120}$/.test(key)) return res.status(400).json({ error: 'bad_key' });
     const v = await verifyKey(key);
     if (!v.ok) return res.status(400).json({ error: 'key_rejected', status: v.status || 0 });
-    const r = await setEnv('GEMINI_API_KEY', key);
+    const r = await setEnv(envNameFor(keyKind(key)), key);
     res.json(Object.assign(aiView(), { persisted: r.persisted, reason: r.reason || '' }));
   } catch (e) { res.status(500).json({ error: 'server' }); }
 });
@@ -433,3 +433,4 @@ router.post('/ai/test', async (req, res) => {
 });
 
 export default router;
+// END-OF-FILE admin.js
