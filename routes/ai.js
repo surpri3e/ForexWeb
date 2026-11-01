@@ -1,6 +1,6 @@
 // دستیار هوش مصنوعی (Groq یا Gemini) برای سایت. کلید و سقف‌ها از lib/aicore.js می‌آن (قابل کنترل از پنل ادمین تلگرام).
 import express from 'express';
-import { getAuth } from '../lib/db.js';
+import { getAuth, sql } from '../lib/db.js';
 import { rateLimit } from '../lib/limit.js';
 import crypto from 'crypto';
 import { askAi, aiStatus, getAiConfig, currentModel } from '../lib/aicore.js';
@@ -29,7 +29,9 @@ router.post('/chat', auth,
       if (j.length > 14000) return res.status(413).json({ error: 'bad_size' });
       extra = `\n\nحالت «تحلیل ژورنال»: این خلاصهٔ آمار ژورنال خود کاربره (JSON). فقط بر اساس همین داده‌ها حرف بزن، عددها رو از همین‌جا نقل کن و چیزی از خودت نساز. اگه داده کمه، صادقانه بگو.\n${j}`;
     }
-    const r = await askAi({ scope: 'site', uid: String(req.user.uid), msgs, extraSystem: extra });
+    let owner = false; // ادمین ربات (صاحب سایت) سقف نداره
+    try { const a = await sql`SELECT 1 FROM tg_links WHERE user_id = ${req.user.uid} AND adm = TRUE LIMIT 1`; owner = a.length > 0; } catch { owner = false; }
+    const r = await askAi({ scope: 'site', uid: String(req.user.uid), msgs, extraSystem: extra, unlimited: owner });
     if (!r.ok) { const m = REASON[r.reason] || [502, 'ai_failed']; return res.status(m[0]).json({ error: m[1] }); }
     res.json({ reply: r.reply, left: r.left });
   });
@@ -80,4 +82,5 @@ router.post('/keytest', rateLimit({ windowMs: 10 * 60 * 1000, max: 15, key: (r) 
 router.get('/status', auth, (req, res) => { const st = aiStatus(); res.json({ on: st.on.site, enabled: st.site, key: st.key, model: st.model, daily: getAiConfig().siteDaily }); });
 
 export default router;
+
 // END-OF-FILE ai.js
