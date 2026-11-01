@@ -8,6 +8,15 @@ import { botStore, MAX_IMG } from '../lib/store.js';
 import adminDep from '../lib/botadmin.js';
 import { renderNews, renderSessions, renderRates, engineInfo } from '../lib/render.js';
 import { getRates, getRatesConfig, ratesStatus } from '../lib/rates.js';
+import { renderCard } from '../lib/render.js';
+import { sql } from '../lib/db.js';
+import { loadDoc } from '../lib/store.js';
+import { statsFor, cardText } from '../lib/card.js';
+import { createReminders } from '../lib/reminders.js';
+import { loadWords, getWords } from '../lib/words.js';
+import { loadLimits, getLimits } from '../lib/limits.js';
+import { setContextProvider } from '../lib/aicore.js';
+import { buildContext } from '../lib/livectx.js';
 import { createGroups } from '../lib/groups.js';
 import { newsEvents, newsStatus, refresh as refreshNews } from './news.js';
 
@@ -40,9 +49,10 @@ export const tgApi = {
     const ext = String(f.file_path || '').split('.').pop().toLowerCase();
     return { buf, mime: ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg' };
   },
-  async sendPhoto(chat, buf, caption, kb) {
+  async sendPhoto(chat, buf, caption, kb, extra) {
     const f = new FormData();
     f.append('chat_id', String(chat));
+    if (extra && extra.reply_to_message_id) { f.append('reply_parameters', JSON.stringify({ message_id: extra.reply_to_message_id, allow_sending_without_reply: true })); }
     if (caption) { f.append('caption', String(caption).slice(0, 1000)); f.append('parse_mode', 'HTML'); }
     if (kb) f.append('reply_markup', JSON.stringify(kb));
     f.append('photo', new Blob([buf], { type: 'image/png' }), 'surpri3efx.png');
@@ -89,10 +99,32 @@ const newsDep = {
     else if (st.ageMin != null && st.ageMin > 30) refreshNews();
   }
 };
+// خروجی عکس/متن طبق تنظیم ادمین: اگه عکس خاموش باشه null برمی‌گرده و همه‌جا متن فرستاده می‌شه (سریع‌تر)
+const renderDep = {
+  rates: (o) => (getRatesConfig().image === false ? Promise.resolve(null) : renderRates(o)),
+  news: (o) => (getRatesConfig().newsImage === false ? Promise.resolve(null) : renderNews(o)),
+  sessions: (o) => (getRatesConfig().newsImage === false ? Promise.resolve(null) : renderSessions(o)),
+  card: renderCard,
+  info: engineInfo
+};
+const reminderSvc = createReminders({ tg: tgApi, max: () => getLimits().remindersMax });
+// کارت نتیجهٔ ژورنال هر نفر (فقط می‌خونه؛ برای کسی که ژورنال نداره حساب نمی‌سازه)
+async function cardFor(tgId, per) {
+  const r = await sql`SELECT user_id, tz FROM tg_links WHERE tg_id = ${tgId}`;
+  if (!r.length) return { state: 'none' };
+  const tz = r[0].tz || 'Asia/Tehran';
+  const { doc } = await loadDoc(r[0].user_id);
+  const o = statsFor(doc, per, tz);
+  if (!o) return { state: 'none' };
+  if (!o.hasData) return { state: 'nodata', o, text: cardText(o) };
+  let buf = null; try { buf = await renderCard(Object.assign({ foot: BOT_USER ? '@' + BOT_USER : 'Surpri3eFX' }, o)); } catch (e) { buf = null; }
+  return { state: 'ok', o, buf, text: cardText(o) };
+}
+const isBotAdmin = (id) => botStore.isAdmin(id);
 engineInfo().then((i) => console.log('image engine:', i.name || 'NONE', i.error || '')).catch(() => {});
 // گروه‌ها: جواب به نرخ ارز + ارسال خودکار (تنظیمش از پنل ادمین)
-export const groupsSvc = createGroups({ tg: tgApi, render: { rates: renderRates, news: renderNews, sessions: renderSessions }, news: newsDep, botName: () => BOT_USER });
-const getBot = () => bot || (bot = createBot({ groups: groupsSvc, store: botStore, tg: tgApi, appUrl: baseUrl(), botName: BOT_USER, admin: adminDep, news: newsDep, rates: { get: getRates, cfg: getRatesConfig, set: (p) => groupsSvc.saveRatesConfig(p), status: ratesStatus, setUsd: (v) => groupsSvc.saveManualUsd(v) }, render: { news: renderNews, sessions: renderSessions, rates: renderRates, info: engineInfo } }));
+export const groupsSvc = createGroups({ tg: tgApi, render: renderDep, news: newsDep, botName: () => BOT_USER, reminders: reminderSvc, cardFor, isBotAdmin });
+const getBot = () => bot || (bot = createBot({ groups: groupsSvc, store: botStore, tg: tgApi, appUrl: baseUrl(), botName: BOT_USER, admin: adminDep, news: newsDep, rates: { get: getRates, cfg: getRatesConfig, set: (p) => groupsSvc.saveRatesConfig(p), status: ratesStatus, setUsd: (v) => groupsSvc.saveManualUsd(v) }, render: renderDep, reminders: reminderSvc, isBotAdmin }));
 
 export async function setupTelegram() {
   if (!token()) return;
@@ -102,6 +134,9 @@ export async function setupTelegram() {
   await step('setWebhook', () => api('setWebhook', { url: baseUrl() + '/api/telegram/webhook', secret_token: secret(), allowed_updates: ['message', 'callback_query', 'my_chat_member'] }));
   if (!healTimer) { healTimer = setInterval(healWebhook, 10 * 60 * 1000); if (healTimer.unref) healTimer.unref(); }
   try { await Promise.race([groupsSvc.loadSettings(), new Promise((r) => setTimeout(r, 15000))]); } catch (e) { console.error('groups settings load failed:', e && e.message); }
+  try { await loadWords(); await loadLimits(); } catch (e) { console.error('words/limits load failed:', e && e.message); }
+  setContextProvider(() => buildContext({ getRates: () => getRates(), news: newsDep }));
+  reminderSvc.start();
   groupsSvc.start();
   await step('menuButton', () => api('setChatMenuButton', { menu_button: { type: 'web_app', text: 'ژورنال', web_app: { url: baseUrl() } } }));
   await step('commands', () => api('setMyCommands', {
@@ -119,7 +154,8 @@ export async function setupTelegram() {
       { command: 'backtest', description: 'ساخت بکتست' },
       { command: 'accounts', description: 'حساب‌های ژورنال' },
       { command: 'csv', description: 'خروجی CSV' },
-      { command: 'ai', description: 'دستیار هوش مصنوعی' },
+      { command: 'ai', description: 'مایکی؛ دستیار هوش مصنوعی' },
+      { command: 'reminders', description: 'یادآوری‌های من' },
       { command: 'settings', description: 'تنظیمات' },
       { command: 'link', description: 'اتصال به حساب سایت' },
       { command: 'id', description: 'شناسهٔ عددی تلگرام من' },
@@ -203,4 +239,5 @@ async function healWebhook() {
 }
 
 export default router;
+
 // END-OF-FILE telegram.js
