@@ -95,12 +95,13 @@ const getBot = () => bot || (bot = createBot({ groups: groupsSvc, store: botStor
 
 export async function setupTelegram() {
   if (!token()) return;
-  // اول تنظیمات و ارسال خودکار بالا میاد؛ خطا توی هر مرحلهٔ تلگرام جلوی بقیه رو نمی‌گیره
-  try { await groupsSvc.loadSettings(); } catch (e) { console.error('groups settings load failed:', e && e.message); }
-  groupsSvc.start();
+  // اول وب‌هوک ثبت می‌شه (تا اگه چیز دیگه‌ای گیر کرد، ربات بی‌جواب نمونه)؛ خطا توی هر مرحله جلوی بقیه رو نمی‌گیره
   const step = async (name, fn) => { try { await fn(); } catch (e) { console.error('telegram setup ' + name + ' failed:', e && e.message); } };
   await step('getMe', async () => { const me = await api('getMe', {}); if (me && me.username) BOT_USER = me.username; });
   await step('setWebhook', () => api('setWebhook', { url: baseUrl() + '/api/telegram/webhook', secret_token: secret(), allowed_updates: ['message', 'callback_query', 'my_chat_member'] }));
+  if (!healTimer) { healTimer = setInterval(healWebhook, 10 * 60 * 1000); if (healTimer.unref) healTimer.unref(); }
+  try { await Promise.race([groupsSvc.loadSettings(), new Promise((r) => setTimeout(r, 15000))]); } catch (e) { console.error('groups settings load failed:', e && e.message); }
+  groupsSvc.start();
   await step('menuButton', () => api('setChatMenuButton', { menu_button: { type: 'web_app', text: 'ژورنال', web_app: { url: baseUrl() } } }));
   await step('commands', () => api('setMyCommands', {
     commands: [
@@ -138,9 +139,11 @@ function enqueue(key, fn) {
   return next;
 }
 
+const hook = { hits: 0, rejected: 0, lastAt: 0, lastErr: '', lastErrAt: 0, started: Date.now() };
 async function handle(u) {
   try { await getBot().handleUpdate(u); }
   catch (e) {
+    hook.lastErr = String((e && e.stack) || e).slice(0, 600); hook.lastErrAt = Date.now();
     console.error('bot error:', e && e.stack || e);
     const chat = (u.message && u.message.chat && u.message.chat.type === 'private' && u.message.chat.id) || (u.callback_query && u.callback_query.message && u.callback_query.message.chat.id);
     if (chat) tgApi.send(chat, 'مشکلی پیش اومد؛ چند لحظه بعد دوباره امتحان کن.', { inline_keyboard: [[{ text: 'منو', callback_data: 'm' }]] }).catch(() => {});
@@ -148,12 +151,46 @@ async function handle(u) {
 }
 
 router.post('/webhook', express.json({ limit: '200kb' }), (req, res) => {
-  if (!token() || req.get('x-telegram-bot-api-secret-token') !== secret()) return res.sendStatus(401);
+  if (!token() || req.get('x-telegram-bot-api-secret-token') !== secret()) { hook.rejected++; console.error('telegram webhook rejected (secret mismatch or no token)'); return res.sendStatus(401); }
   res.sendStatus(200);
   const u = req.body || {};
+  hook.hits++; hook.lastAt = Date.now();
   const from = (u.message && u.message.from) || (u.callback_query && u.callback_query.from) || (u.my_chat_member && u.my_chat_member.from);
   if (!from) return;
   enqueue(String(from.id), () => handle(u));
 });
 
+// عیب‌یابی ربات (فقط با ADMIN_KEY): وضعیت وب‌هوک و آخرین خطا. با fix=1 وب‌هوک دوباره ثبت می‌شه.
+// باز کردن توی مرورگر:  /api/telegram/diag?key=ADMIN_KEY   یا   /api/telegram/diag?key=ADMIN_KEY&fix=1
+router.get('/diag', async (req, res) => {
+  const exp = process.env.ADMIN_KEY || '';
+  const given = String(req.query.key || '');
+  const sha = (x) => crypto.createHash('sha256').update(String(x)).digest();
+  if (!exp || !crypto.timingSafeEqual(sha(given), sha(exp))) return res.status(401).json({ error: 'unauthorized' });
+  const out = { tokenSet: !!token(), username: BOT_USER || null, expectedUrl: baseUrl() + '/api/telegram/webhook', server: { hits: hook.hits, rejected401: hook.rejected, lastHitSecondsAgo: hook.lastAt ? Math.round((Date.now() - hook.lastAt) / 1000) : null, lastError: hook.lastErr || null, lastErrorSecondsAgo: hook.lastErrAt ? Math.round((Date.now() - hook.lastErrAt) / 1000) : null, uptimeSeconds: Math.round((Date.now() - hook.started) / 1000) } };
+  if (!token()) return res.json(out);
+  try { const me = await api('getMe', {}); out.getMe = { ok: true, username: me.username }; } catch (e) { out.getMe = { ok: false, error: String(e.message) }; }
+  try {
+    if (req.query.fix === '1') { await api('setWebhook', { url: out.expectedUrl, secret_token: secret(), allowed_updates: ['message', 'callback_query', 'my_chat_member'] }); out.fixed = true; }
+    const w = await api('getWebhookInfo', {});
+    out.webhook = { url: w.url, urlMatches: w.url === out.expectedUrl, pending: w.pending_update_count, lastErrorMessage: w.last_error_message || null, lastErrorSecondsAgo: w.last_error_date ? Math.round(Date.now() / 1000 - w.last_error_date) : null, maxConnections: w.max_connections };
+  } catch (e) { out.webhook = { error: String(e.message) }; }
+  res.json(out);
+});
+
+// اگه وب‌هوک یه جای دیگه افتاد یا پاک شد، خودش دوباره ثبتش می‌کنه
+let healTimer = null;
+async function healWebhook() {
+  if (!token()) return;
+  try {
+    const w = await api('getWebhookInfo', {});
+    const want = baseUrl() + '/api/telegram/webhook';
+    if (w.url !== want || /401|Unauthorized/i.test(String(w.last_error_message || ''))) {
+      console.error('webhook heal: was', w.url || '(none)', 'err:', w.last_error_message || '-');
+      await api('setWebhook', { url: want, secret_token: secret(), allowed_updates: ['message', 'callback_query', 'my_chat_member'] });
+    }
+  } catch (e) { console.error('webhook heal failed:', e && e.message); }
+}
+
 export default router;
+// END-OF-FILE telegram.js
