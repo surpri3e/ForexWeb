@@ -19,7 +19,7 @@ let BOT_USER = process.env.TELEGRAM_BOT_USERNAME || '';
 export const botUsername = () => BOT_USER;
 
 async function api(method, body) {
-  const r = await fetch(`https://api.telegram.org/bot${token()}/${method}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const r = await fetch(`https://api.telegram.org/bot${token()}/${method}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(25000) });
   const j = await r.json().catch(() => ({}));
   if (!j.ok) { const e = new Error(method + ': ' + (j.description || r.status)); e.code = j.error_code; throw e; }
   return j.result;
@@ -133,7 +133,7 @@ export async function setupTelegram() {
 const queues = new Map();
 function enqueue(key, fn) {
   const prev = queues.get(key) || Promise.resolve();
-  const next = prev.catch(() => {}).then(fn);
+  const next = prev.catch(() => {}).then(() => Promise.race([fn(), new Promise((r) => setTimeout(() => { console.error('bot update timed out (90s) for', key); r(); }, 90000))]));
   queues.set(key, next);
   next.finally(() => { if (queues.get(key) === next) queues.delete(key); });
   return next;
@@ -155,6 +155,7 @@ router.post('/webhook', express.json({ limit: '200kb' }), (req, res) => {
   res.sendStatus(200);
   const u = req.body || {};
   hook.hits++; hook.lastAt = Date.now();
+  console.log('tg update', Object.keys(u).filter((k) => k !== 'update_id').join(','), 'from', from.id, u.message && u.message.chat ? u.message.chat.type : '');
   const from = (u.message && u.message.from) || (u.callback_query && u.callback_query.from) || (u.my_chat_member && u.my_chat_member.from);
   if (!from) return;
   enqueue(String(from.id), () => handle(u));
