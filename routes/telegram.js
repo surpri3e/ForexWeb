@@ -52,6 +52,7 @@ export const tgApi = {
     return j.result;
   },
   leave: (chat) => api('leaveChat', { chat_id: chat }),
+  getMember: (chat, user) => api('getChatMember', { chat_id: chat, user_id: user }),
   editMarkup: (chat, id, kb) => api('editMessageReplyMarkup', { chat_id: chat, message_id: id, reply_markup: kb }),
   editCaption: (chat, id, caption, kb) => api('editMessageCaption', Object.assign({ chat_id: chat, message_id: id, caption: String(caption).slice(0, 1000), parse_mode: 'HTML' }, kb ? { reply_markup: kb } : {})),
   async editPhoto(chat, id, buf, caption, kb) {
@@ -90,7 +91,7 @@ const newsDep = {
 };
 engineInfo().then((i) => console.log('image engine:', i.name || 'NONE', i.error || '')).catch(() => {});
 // گروه‌ها: جواب به نرخ ارز + ارسال خودکار (تنظیمش از پنل ادمین)
-export const groupsSvc = createGroups({ tg: tgApi, render: { rates: renderRates }, botName: () => BOT_USER });
+export const groupsSvc = createGroups({ tg: tgApi, render: { rates: renderRates, news: renderNews, sessions: renderSessions }, news: newsDep, botName: () => BOT_USER });
 const getBot = () => bot || (bot = createBot({ groups: groupsSvc, store: botStore, tg: tgApi, appUrl: baseUrl(), botName: BOT_USER, admin: adminDep, news: newsDep, rates: { get: getRates, cfg: getRatesConfig, set: (p) => groupsSvc.saveRatesConfig(p), status: ratesStatus, setUsd: (v) => groupsSvc.saveManualUsd(v) }, render: { news: renderNews, sessions: renderSessions, rates: renderRates, info: engineInfo } }));
 
 export async function setupTelegram() {
