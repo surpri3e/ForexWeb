@@ -1,8 +1,11 @@
-// دستیار هوش مصنوعی (Gemini) برای سایت. کلید و سقف‌ها از lib/ai.js می‌آن (قابل کنترل از پنل ادمین تلگرام).
+// دستیار هوش مصنوعی (Groq یا Gemini) برای سایت. کلید و سقف‌ها از lib/aicore.js می‌آن (قابل کنترل از پنل ادمین تلگرام).
 import express from 'express';
 import { getAuth } from '../lib/db.js';
 import { rateLimit } from '../lib/limit.js';
+import crypto from 'crypto';
 import { askAi, aiStatus, getAiConfig, currentModel } from '../lib/aicore.js';
+import { keyTest } from '../lib/aitest.js';
+import { AI_TEST_PAGE } from '../lib/aitestpage.js';
 
 const router = express.Router();
 const ENDPOINT = (m) => `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(m)}:generateContent`;
@@ -34,6 +37,8 @@ router.post('/chat', auth,
 
 // عیب‌یابی: یه درخواست خیلی کوچیک به Gemini می‌زنه و جواب خام (بدون کلید) رو برمی‌گردونه. فقط برای کاربر واردشده.
 router.get('/diag', auth, rateLimit({ windowMs: 10 * 60 * 1000, max: 20, key: (r) => 'aid' + (r.user && r.user.uid) }), async (req, res) => {
+  const st0 = aiStatus();
+  if (st0.provider === 'groq') return res.json({ provider: 'groq', model: st0.model, keySet: true, hint: 'برای تست Groq از /api/ai/test-page استفاده کن.' });
   const key = process.env.GEMINI_API_KEY;
   const MODEL = currentModel();
   const out = { keySet: !!key, keyLen: key ? key.length : 0, keyLooksValid: !!key && /^[\w.-]{30,}$/.test(key), model: currentModel(), node: process.version };
@@ -63,6 +68,16 @@ router.get('/diag', auth, rateLimit({ windowMs: 10 * 60 * 1000, max: 20, key: (r
   res.json(out);
 });
 
+// صفحهٔ عیب‌یابی کلید (با رمز ادمین). باز کردن: /api/ai/test-page
+router.get('/test-page', (req, res) => res.type('html').send(AI_TEST_PAGE));
+router.post('/keytest', rateLimit({ windowMs: 10 * 60 * 1000, max: 15, key: (r) => 'akt' + r.ip }), async (req, res) => {
+  const exp = process.env.ADMIN_KEY || '';
+  const sha = (x) => crypto.createHash('sha256').update(String(x)).digest();
+  if (!exp || !crypto.timingSafeEqual(sha(req.get('X-Admin-Key') || ''), sha(exp))) return res.status(401).json({ error: 'unauthorized' });
+  try { res.json(await keyTest(String((req.body || {}).key || ''))); } catch (e) { res.status(500).json({ error: 'server' }); }
+});
+
 router.get('/status', auth, (req, res) => { const st = aiStatus(); res.json({ on: st.on.site, enabled: st.site, key: st.key, model: st.model, daily: getAiConfig().siteDaily }); });
 
 export default router;
+// END-OF-FILE ai.js
