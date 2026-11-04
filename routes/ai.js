@@ -83,4 +83,4 @@ router.get('/status', auth, (req, res) => { const st = aiStatus(); res.json({ on
 
 export default router;
 
-// END-OF-FILE ai.js
+// END-OF-FILE routes/ai.js
