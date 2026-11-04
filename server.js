@@ -12,7 +12,6 @@ import supportRoutes from './routes/support.js';
 import globalRoutes, { startGlobalHousekeeping } from './routes/global.js';
 import aiRoutes from './routes/ai.js';
 import telegramRoutes, { setupTelegram } from './routes/telegram.js';
-import chartRoutes from './routes/chart.js';
 import syncRoutes from './routes/sync.js';
 import newsRoutes, { startNewsRefresh } from './routes/news.js';
 import ratesRoutes from './routes/rates.js';
@@ -70,17 +69,10 @@ app.use('/api/rates', ratesRoutes);
 app.use('/api/ai', express.json({ limit: '60kb' }), aiRoutes);
 app.use('/api/telegram', telegramRoutes);
 app.use('/api/sync', syncRoutes);
-app.use('/api/chart', chartRoutes); // چارت زنده: فقط مالک
 
 app.get('/healthz', (req, res) => res.json({ ok: true }));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 app.get('/index.html', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
-
-// صفحهٔ چارت و فایل‌هایش (خود کد محرمانه نیست؛ دیتا فقط با کلید مالک از /api/chart می‌آید)
-const CHART_FILES = { '/chart': 'chart.html', '/chart/': 'chart.html', '/chart/chart-view.js': 'chart-view.js', '/chart/chart-ind.js': 'chart-ind.js', '/chart/chart-bt.js': 'chart-bt.js' };
-for (const [url, file] of Object.entries(CHART_FILES)) {
-  app.get(url, (req, res) => { res.set('Cache-Control', 'no-cache'); res.sendFile(path.join(__dirname, file)); });
-}
 
 // JSON errors (body too large / bad JSON) instead of an HTML stack page
 app.use((err, req, res, next) => {
