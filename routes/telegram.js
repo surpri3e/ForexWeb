@@ -18,6 +18,8 @@ import { loadLimits, getLimits } from '../lib/limits.js';
 import { setContextProvider } from '../lib/aicore.js';
 import { buildContext } from '../lib/livectx.js';
 import { createGroups } from '../lib/groups.js';
+import { createMemory } from '../lib/memory.js';
+import { createTools } from '../lib/tools.js';
 import { newsEvents, newsStatus, refresh as refreshNews } from './news.js';
 
 const router = express.Router();
@@ -63,6 +65,8 @@ export const tgApi = {
   },
   leave: (chat) => api('leaveChat', { chat_id: chat }),
   getMember: (chat, user) => api('getChatMember', { chat_id: chat, user_id: user }),
+  memberCount: (chat) => api('getChatMemberCount', { chat_id: chat }),
+  admins: (chat) => api('getChatAdministrators', { chat_id: chat }),
   editMarkup: (chat, id, kb) => api('editMessageReplyMarkup', { chat_id: chat, message_id: id, reply_markup: kb }),
   editCaption: (chat, id, caption, kb) => api('editMessageCaption', Object.assign({ chat_id: chat, message_id: id, caption: String(caption).slice(0, 1000), parse_mode: 'HTML' }, kb ? { reply_markup: kb } : {})),
   async editPhoto(chat, id, buf, caption, kb) {
@@ -74,6 +78,39 @@ export const tgApi = {
     const r = await fetch(`https://api.telegram.org/bot${token()}/editMessageMedia`, { method: 'POST', body: f });
     const j = await r.json().catch(() => ({}));
     if (!j.ok) { const e = new Error('editMessageMedia: ' + (j.description || r.status)); e.code = j.error_code; throw e; }
+    return j.result;
+  },
+  // دانلود فایل صدا/ویدیو کاربر (سقف دانلود ربات‌های تلگرام ۲۰ مگابایته)
+  async getBuf(fileId, max = 19 * 1024 * 1024) {
+    const f = await api('getFile', { file_id: fileId });
+    if (f.file_size && f.file_size > max) return { buf: null, big: true };
+    const r = await fetch(`https://api.telegram.org/file/bot${token()}/${f.file_path}`, { signal: AbortSignal.timeout(60000) });
+    if (!r.ok) throw new Error('download ' + r.status);
+    return { buf: Buffer.from(await r.arrayBuffer()), name: String(f.file_path || '').split('/').pop() };
+  },
+  async sendVideo(chat, buf, name, caption, extra) {
+    const f = new FormData();
+    f.append('chat_id', String(chat));
+    if (extra && extra.reply_to_message_id) f.append('reply_parameters', JSON.stringify({ message_id: extra.reply_to_message_id, allow_sending_without_reply: true }));
+    if (caption) { f.append('caption', String(caption).slice(0, 1000)); f.append('parse_mode', 'HTML'); }
+    f.append('supports_streaming', 'true');
+    f.append('video', new Blob([buf], { type: 'video/mp4' }), name || 'video.mp4');
+    const r = await fetch(`https://api.telegram.org/bot${token()}/sendVideo`, { method: 'POST', body: f, signal: AbortSignal.timeout(180000) });
+    const j = await r.json().catch(() => ({}));
+    if (!j.ok) throw new Error('sendVideo: ' + (j.description || r.status));
+    return j.result;
+  },
+  async sendAudio(chat, buf, name, o = {}, extra) {
+    const f = new FormData();
+    f.append('chat_id', String(chat));
+    if (extra && extra.reply_to_message_id) f.append('reply_parameters', JSON.stringify({ message_id: extra.reply_to_message_id, allow_sending_without_reply: true }));
+    if (o.caption) { f.append('caption', String(o.caption).slice(0, 1000)); f.append('parse_mode', 'HTML'); }
+    if (o.title) f.append('title', String(o.title).slice(0, 80));
+    if (o.performer) f.append('performer', String(o.performer).slice(0, 80));
+    f.append('audio', new Blob([buf], { type: 'audio/mp4' }), name || 'audio.m4a');
+    const r = await fetch(`https://api.telegram.org/bot${token()}/sendAudio`, { method: 'POST', body: f, signal: AbortSignal.timeout(180000) });
+    const j = await r.json().catch(() => ({}));
+    if (!j.ok) throw new Error('sendAudio: ' + (j.description || r.status));
     return j.result;
   },
   async sendDoc(chat, filename, buf, caption) {
@@ -107,7 +144,7 @@ const renderDep = {
   card: renderCard,
   info: engineInfo
 };
-const reminderSvc = createReminders({ tg: tgApi, max: () => getLimits().remindersMax });
+const reminderSvc = createReminders({ tg: tgApi, max: () => getLimits().remindersMax, after: (tgId, chat) => getBot().pushMenu(tgId, chat) });
 // کارت نتیجهٔ ژورنال هر نفر (فقط می‌خونه؛ برای کسی که ژورنال نداره حساب نمی‌سازه)
 async function cardFor(tgId, per) {
   const r = await sql`SELECT user_id, tz FROM tg_links WHERE tg_id = ${tgId}`;
@@ -121,10 +158,12 @@ async function cardFor(tgId, per) {
   return { state: 'ok', o, buf, text: cardText(o) };
 }
 const isBotAdmin = (id) => botStore.isAdmin(id);
+export const toolsSvc = createTools();
 engineInfo().then((i) => console.log('image engine:', i.name || 'NONE', i.error || '')).catch(() => {});
 // گروه‌ها: جواب به نرخ ارز + ارسال خودکار (تنظیمش از پنل ادمین)
-export const groupsSvc = createGroups({ tg: tgApi, render: renderDep, news: newsDep, botName: () => BOT_USER, reminders: reminderSvc, cardFor, isBotAdmin });
-const getBot = () => bot || (bot = createBot({ groups: groupsSvc, store: botStore, tg: tgApi, appUrl: baseUrl(), botName: BOT_USER, admin: adminDep, news: newsDep, rates: { get: getRates, cfg: getRatesConfig, set: (p) => groupsSvc.saveRatesConfig(p), status: ratesStatus, setUsd: (v) => groupsSvc.saveManualUsd(v) }, render: renderDep, reminders: reminderSvc, isBotAdmin }));
+export const memorySvc = createMemory({ db: sql });
+export const groupsSvc = createGroups({ memory: memorySvc, tg: tgApi, render: renderDep, news: newsDep, botName: () => BOT_USER, reminders: reminderSvc, cardFor, isBotAdmin });
+const getBot = () => bot || (bot = createBot({ memory: memorySvc, groups: groupsSvc, store: botStore, tg: tgApi, appUrl: baseUrl(), botName: BOT_USER, admin: adminDep, news: newsDep, rates: { get: getRates, cfg: getRatesConfig, set: (p) => groupsSvc.saveRatesConfig(p), status: ratesStatus, setUsd: (v) => groupsSvc.saveManualUsd(v) }, render: renderDep, reminders: reminderSvc, tools: toolsSvc, isBotAdmin }));
 
 export async function setupTelegram() {
   if (!token()) return;
@@ -240,4 +279,4 @@ async function healWebhook() {
 
 export default router;
 
-// END-OF-FILE telegram.js
+// END-OF-FILE routes/telegram.js
