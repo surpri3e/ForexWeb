@@ -177,4 +177,5 @@ router.get('/', rateLimit({ windowMs: 60 * 1000, max: 60 }), async (req, res) =>
 });
 
 export default router;
-// END-OF-FILE news.js
+
+// END-OF-FILE routes/news.js
