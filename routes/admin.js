@@ -433,4 +433,5 @@ router.post('/ai/test', async (req, res) => {
 });
 
 export default router;
-// END-OF-FILE admin.js
+
+// END-OF-FILE routes/admin.js
