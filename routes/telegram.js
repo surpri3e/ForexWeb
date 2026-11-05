@@ -13,6 +13,7 @@ import { sql } from '../lib/db.js';
 import { loadDoc } from '../lib/store.js';
 import { statsFor, cardText } from '../lib/card.js';
 import { createReminders } from '../lib/reminders.js';
+import { paintMarkup } from '../lib/paint.js';
 import { loadWords, getWords } from '../lib/words.js';
 import { loadLimits, getLimits } from '../lib/limits.js';
 import { setContextProvider } from '../lib/aicore.js';
@@ -37,9 +38,9 @@ async function api(method, body) {
 }
 const base = { parse_mode: 'HTML', disable_web_page_preview: true };
 export const tgApi = {
-  send: (chat, text, kb, extra) => api('sendMessage', Object.assign({ chat_id: chat, text: String(text).slice(0, 4000) }, base, kb ? { reply_markup: kb } : {}, extra || {})),
+  send: (chat, text, kb, extra) => api('sendMessage', Object.assign({ chat_id: chat, text: String(text).slice(0, 4000) }, base, kb ? { reply_markup: paintMarkup(kb) } : {}, extra || {})),
   action: (chat, act) => api('sendChatAction', { chat_id: chat, action: act }),
-  edit: (chat, id, text, kb) => api('editMessageText', Object.assign({ chat_id: chat, message_id: id, text: String(text).slice(0, 4000) }, base, kb ? { reply_markup: kb } : {})),
+  edit: (chat, id, text, kb) => api('editMessageText', Object.assign({ chat_id: chat, message_id: id, text: String(text).slice(0, 4000) }, base, kb ? { reply_markup: paintMarkup(kb) } : {})),
   del: (chat, id) => api('deleteMessage', { chat_id: chat, message_id: id }),
   answer: (id, text) => api('answerCallbackQuery', Object.assign({ callback_query_id: id }, text ? { text: String(text).slice(0, 190) } : {})),
   async getFile(fileId) {
@@ -56,7 +57,7 @@ export const tgApi = {
     f.append('chat_id', String(chat));
     if (extra && extra.reply_to_message_id) { f.append('reply_parameters', JSON.stringify({ message_id: extra.reply_to_message_id, allow_sending_without_reply: true })); }
     if (caption) { f.append('caption', String(caption).slice(0, 1000)); f.append('parse_mode', 'HTML'); }
-    if (kb) f.append('reply_markup', JSON.stringify(kb));
+    if (kb) f.append('reply_markup', JSON.stringify(paintMarkup(kb)));
     f.append('photo', new Blob([buf], { type: 'image/png' }), 'surpri3efx.png');
     const r = await fetch(`https://api.telegram.org/bot${token()}/sendPhoto`, { method: 'POST', body: f });
     const j = await r.json().catch(() => ({}));
@@ -67,13 +68,13 @@ export const tgApi = {
   getMember: (chat, user) => api('getChatMember', { chat_id: chat, user_id: user }),
   memberCount: (chat) => api('getChatMemberCount', { chat_id: chat }),
   admins: (chat) => api('getChatAdministrators', { chat_id: chat }),
-  editMarkup: (chat, id, kb) => api('editMessageReplyMarkup', { chat_id: chat, message_id: id, reply_markup: kb }),
-  editCaption: (chat, id, caption, kb) => api('editMessageCaption', Object.assign({ chat_id: chat, message_id: id, caption: String(caption).slice(0, 1000), parse_mode: 'HTML' }, kb ? { reply_markup: kb } : {})),
+  editMarkup: (chat, id, kb) => api('editMessageReplyMarkup', { chat_id: chat, message_id: id, reply_markup: paintMarkup(kb) }),
+  editCaption: (chat, id, caption, kb) => api('editMessageCaption', Object.assign({ chat_id: chat, message_id: id, caption: String(caption).slice(0, 1000), parse_mode: 'HTML' }, kb ? { reply_markup: paintMarkup(kb) } : {})),
   async editPhoto(chat, id, buf, caption, kb) {
     const f = new FormData();
     f.append('chat_id', String(chat)); f.append('message_id', String(id));
     f.append('media', JSON.stringify({ type: 'photo', media: 'attach://photo', caption: String(caption || '').slice(0, 1000), parse_mode: 'HTML' }));
-    if (kb) f.append('reply_markup', JSON.stringify(kb));
+    if (kb) f.append('reply_markup', JSON.stringify(paintMarkup(kb)));
     f.append('photo', new Blob([buf], { type: 'image/png' }), 'surpri3efx.png');
     const r = await fetch(`https://api.telegram.org/bot${token()}/editMessageMedia`, { method: 'POST', body: f });
     const j = await r.json().catch(() => ({}));
@@ -226,10 +227,12 @@ async function handle(u) {
   }
 }
 
+const seenUpd = new Set();
 router.post('/webhook', express.json({ limit: '200kb' }), (req, res) => {
   if (!token() || req.get('x-telegram-bot-api-secret-token') !== secret()) { hook.rejected++; console.error('telegram webhook rejected (secret mismatch or no token); token set:', !!token()); forceWebhook(); return res.sendStatus(401); }
   res.sendStatus(200);
   const u = req.body || {};
+  if (u.update_id != null) { if (seenUpd.has(u.update_id)) return; seenUpd.add(u.update_id); if (seenUpd.size > 600) seenUpd.delete(seenUpd.values().next().value); } // تلگرام گاهی یک آپدیت رو دوباره می‌فرسته
   const from = (u.message && u.message.from) || (u.callback_query && u.callback_query.from) || (u.my_chat_member && u.my_chat_member.from);
   if (!from) return;
   hook.hits++; hook.lastAt = Date.now();
