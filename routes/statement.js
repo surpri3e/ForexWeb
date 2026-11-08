@@ -3,7 +3,7 @@ import express from 'express';
 import { getAuth } from '../lib/db.js';
 import { rateLimit } from '../lib/limit.js';
 import { callAi, aiStatus } from '../lib/aicore.js';
-import { STATEMENT_SYSTEM, parseModelJson, analyze, smartMerge, checkTotals } from '../lib/statement.js';
+import { statementPrompt, parseModelJson, analyze, smartMerge, checkTotals } from '../lib/statement.js';
 
 const router = express.Router();
 function auth(req, res, next) {
@@ -19,9 +19,10 @@ router.post('/parse', auth, rateLimit({ windowMs: 10 * 60 * 1000, max: 120, key:
   const m = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/.exec(String((req.body && req.body.image) || ''));
   if (!m) return res.status(400).json({ error: 'bad_image' });
   if (m[2].length > 2.2e6) return res.status(413).json({ error: 'bad_size' });
+  const lang = ['fa', 'en'].includes(req.body.lang) ? req.body.lang : '';
   try {
     const reply = await callAi({
-      system: STATEMENT_SYSTEM, maxTokens: 4000, temperature: 0.05, timeoutMs: 70000,
+      system: statementPrompt(lang), maxTokens: 4000, temperature: 0.05, timeoutMs: 70000,
       contents: [{ role: 'user', parts: [{ text: 'این اسکرین‌شات تاریخچهٔ معاملات است. طبق قوانین فقط JSON را برگردان.' }, { inlineData: { mimeType: m[1], data: m[2] } }] }],
     });
     const out = parseModelJson(reply);
