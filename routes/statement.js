@@ -4,7 +4,7 @@ import crypto from 'crypto';
 import { getAuth, sql } from '../lib/db.js';
 import { rateLimit } from '../lib/limit.js';
 import { callAi, aiStatus } from '../lib/aicore.js';
-import { statementPrompt, parseModelJson, analyze, smartMerge, checkTotals } from '../lib/statement.js';
+import { statementPrompt, parseModelJson, analyze, smartMerge, checkTotals, applyHeaderCosts } from '../lib/statement.js';
 
 const router = express.Router();
 function auth(req, res, next) {
@@ -53,7 +53,10 @@ router.post('/merge', auth, rateLimit({ windowMs: 10 * 60 * 1000, max: 60, key: 
   const b = req.body || {};
   if (!Array.isArray(b.batches) || b.batches.length > 60 || b.batches.some((x) => !Array.isArray(x) || x.length > 400)) return res.status(400).json({ error: 'bad_request' });
   const m = smartMerge(b.batches);
-  res.json({ rows: m.rows, dups: m.dups, check: checkTotals(m.rows, Array.isArray(b.totals) ? b.totals.slice(0, 60) : []) });
+  const totals = Array.isArray(b.totals) ? b.totals.slice(0, 60) : [];
+  const check = checkTotals(m.rows, totals);   // مقایسهٔ سود ردیف‌ها با جمع بالای صفحه (کمیسیون/سواپ جدا حساب می‌شود)
+  const h = applyHeaderCosts(m.rows, totals);
+  res.json({ rows: h.rows, dups: m.dups, check, costs: h.costs });
 });
 
 router.post('/analyze', auth, rateLimit({ windowMs: 10 * 60 * 1000, max: 120, key: (r) => 'sta' + (r.user && r.user.uid) }), (req, res) => {
