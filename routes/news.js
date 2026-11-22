@@ -76,7 +76,11 @@ async function fetchWeek(file) {
   throw err;
 }
 
+// ذخیرهٔ خبرها توی دیتابیس فقط هر ۳ ساعت یک بار (برای بعد از ری‌استارت)؛ هر ۳۰ دقیقه نوشتن دیتابیس رایگان Neon رو بیدار نگه می‌داشت
+let lastPersist = 0;
 async function persist() {
+  if (Date.now() - lastPersist < 3 * 3600e3) return;
+  lastPersist = Date.now();
   try {
     const v = JSON.stringify({ updatedAt: cache.updatedAt, source: cache.source, events: cache.events });
     const ex = await sql`SELECT k FROM site_settings WHERE k = 'news_cache'`;
