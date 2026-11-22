@@ -165,6 +165,7 @@ router.post('/delete', async (req, res) => {
     const ok = await bcrypt.compare(password, u.password_hash);
     if (!ok) return res.status(401).json({ error: 'invalid' });
     await sql`DELETE FROM users WHERE id=${u.id}`;
+    forgetAuth(u.id);
     res.json({ ok: true });
   } catch (e) {
     console.error(e);
