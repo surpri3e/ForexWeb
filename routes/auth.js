@@ -2,7 +2,7 @@ import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
-import { sql, getAuth } from '../lib/db.js';
+import { sql, getAuth, forgetAuth } from '../lib/db.js';
 import { userForTg } from '../lib/store.js';
 import { rateLimit } from '../lib/limit.js';
 import { tgApi } from './telegram.js';
@@ -19,11 +19,20 @@ const perEmail = rateLimit({
   key: (req) => req.ip + ':' + normEmail(req.body && req.body.email)
 });
 
-router.post('/register', perEmail, async (req, res) => {
+// سقف سراسری برای هر ایمیل (از هر IP): جلوی حدس رمز از چند IP مختلف رو می‌گیره
+const perEmailGlobal = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 40,
+  key: (req) => 'g:' + normEmail(req.body && req.body.email)
+});
+// فقط کاراکترهای معمولِ ایمیل (جلوی < > " ' و … رو می‌گیره)؛ دامنهٔ داخلی تلگرام برای ثبت‌نام ممنوعه
+const EMAIL_RE = /^[a-z0-9.!#$%&*+\/=?^_`{|}~-]{1,64}@[a-z0-9-]+(\.[a-z0-9-]+)+$/;
+
+router.post('/register', perEmail, perEmailGlobal, async (req, res) => {
   const email = normEmail(req.body && req.body.email);
   const password = req.body && req.body.password;
   if (!email || typeof password !== 'string' || !password) return res.status(400).json({ error: 'missing' });
-  if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+  if (email.length > 254 || !EMAIL_RE.test(email) || /@telegram\.local$/.test(email))
     return res.status(400).json({ error: 'bad_email' });
   // bcrypt only uses the first 72 bytes, so longer passwords are rejected instead of silently truncated
   if (password.length < 8 || Buffer.byteLength(password) > 72)
@@ -47,7 +56,7 @@ router.post('/register', perEmail, async (req, res) => {
   }
 });
 
-router.post('/login', perEmail, async (req, res) => {
+router.post('/login', perEmail, perEmailGlobal, async (req, res) => {
   const email = normEmail(req.body && req.body.email);
   const password = req.body && req.body.password;
   if (!email || typeof password !== 'string' || !password) return res.status(400).json({ error: 'missing' });
@@ -132,7 +141,8 @@ router.post('/reset', rateLimit({ windowMs: 15 * 60 * 1000, max: 12, key: (req) 
     const a = Buffer.from(codeHash(u.id, code), 'hex'), b = Buffer.from(r.code_hash, 'hex');
     if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) { await sql`UPDATE password_resets SET tries = tries + 1 WHERE user_id=${u.id}`; return res.status(400).json({ error: 'bad_code' }); }
     const hash = await bcrypt.hash(password, 10);
-    await sql`UPDATE users SET password_hash=${hash} WHERE id=${u.id}`;
+    await sql`UPDATE users SET password_hash=${hash}, pw_changed_at=NOW() WHERE id=${u.id}`;
+    forgetAuth(u.id); // همهٔ نشست‌های قبلی (توکن‌های قدیمی) از این لحظه باطل می‌شن
     await sql`DELETE FROM password_resets WHERE user_id=${u.id}`;
     res.json({ ok: true });
   } catch (e) { console.error(e); res.status(500).json({ error: 'server' }); }
@@ -163,3 +173,5 @@ router.post('/delete', async (req, res) => {
 });
 
 export default router;
+
+// END-OF-FILE routes/auth.js
