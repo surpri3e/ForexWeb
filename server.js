@@ -63,7 +63,7 @@ app.use(cors({ origin: (origin, cb) => cb(null, !origin || allowed.includes(orig
 
 // آخرین زمان حضور کاربر (برای «فعال در ۲۴ ساعت» تو مدیریت)؛ حداکثر هر ۱۰ دقیقه یه بار برای هر کاربر نوشته می‌شه
 const seenAt = new Map();
-setInterval(() => { const t = Date.now() - 3600e3; for (const [k, v] of seenAt) if (v < t) seenAt.delete(k); }, 3600e3).unref();
+setInterval(() => { const t = Date.now() - 7200e3; for (const [k, v] of seenAt) if (v < t) seenAt.delete(k); }, 3600e3).unref();
 // سقف کلی درخواست از یک IP (جلوی سیل ساده)؛ سقف‌های دقیق‌تر هر مسیر جداست
 app.use('/api', rateLimit({ windowMs: 10 * 60 * 1000, max: 3000, key: (r) => 'all' + r.ip }));
 
@@ -78,7 +78,7 @@ app.use('/api', async (req, res, next) => {
     catch (e) { console.error('token check:', e && e.message); } // خطای دیتابیس: مسیر خودش مدیریت می‌کنه
   }
   const now = Date.now();
-  if (!seenAt.has(u.uid) || now - seenAt.get(u.uid) > 600e3) {
+  if (!seenAt.has(u.uid) || now - seenAt.get(u.uid) > 3600e3) { // «آخرین بازدید» ساعتی یک بار ثبت می‌شه تا هر بازدید یک نوشتن روی دیتابیس نباشه
     seenAt.set(u.uid, now);
     Promise.resolve(sql`UPDATE users SET last_seen=NOW() WHERE id=${u.uid}`).catch(() => {});
   }
