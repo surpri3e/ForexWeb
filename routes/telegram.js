@@ -37,10 +37,41 @@ async function api(method, body) {
   return j.result;
 }
 const base = { parse_mode: 'HTML', disable_web_page_preview: true };
+
+// بریدن امن متن HTML: وسط تگ یا موجودیت (&amp;) نمی‌بُره و تگ‌های باز رو می‌بنده؛
+// قبلاً slice ساده ممکن بود تگ رو نصفه بذاره و تلگرام کل پیام رو با «can't parse entities» رد کنه.
+export function clipHtml(text, max) {
+  let t = String(text == null ? '' : text);
+  if (t.length <= max) return t;
+  t = t.slice(0, max);
+  const lt = t.lastIndexOf('<'), gt = t.lastIndexOf('>');
+  if (lt > gt) t = t.slice(0, lt);
+  const amp = t.lastIndexOf('&');
+  if (amp > -1 && t.indexOf(';', amp) === -1 && t.length - amp < 10) t = t.slice(0, amp);
+  const stack = []; const re = /<(\/?)([a-z][a-z0-9-]*)\b[^>]*>/gi; let m;
+  while ((m = re.exec(t))) {
+    const name = m[2].toLowerCase();
+    if (m[1]) { const i = stack.lastIndexOf(name); if (i >= 0) stack.length = i; } else stack.push(name);
+  }
+  return t + stack.reverse().map((x) => '</' + x + '>').join('');
+}
+const plain = (s) => String(s == null ? '' : s).replace(/<[^>]*>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+const isParseErr = (e) => /parse entities|can't find end|unsupported start tag/i.test(String((e && e.message) || ''));
+// اگه با HTML نشد، همون متن بدون قالب‌بندی می‌ره تا پیام گم نشه
+async function apiHtml(method, body) {
+  try { return await api(method, body); }
+  catch (e) {
+    if (!isParseErr(e)) throw e;
+    const b = Object.assign({}, body); delete b.parse_mode;
+    if (b.text != null) b.text = plain(b.text);
+    if (b.caption != null) b.caption = plain(b.caption);
+    return api(method, b);
+  }
+}
 export const tgApi = {
-  send: (chat, text, kb, extra) => api('sendMessage', Object.assign({ chat_id: chat, text: String(text).slice(0, 4000) }, base, kb ? { reply_markup: paintMarkup(kb) } : {}, extra || {})),
+  send: (chat, text, kb, extra) => apiHtml('sendMessage', Object.assign({ chat_id: chat, text: clipHtml(text, 4000) }, base, kb ? { reply_markup: paintMarkup(kb) } : {}, extra || {})),
   action: (chat, act) => api('sendChatAction', { chat_id: chat, action: act }),
-  edit: (chat, id, text, kb) => api('editMessageText', Object.assign({ chat_id: chat, message_id: id, text: String(text).slice(0, 4000) }, base, kb ? { reply_markup: paintMarkup(kb) } : {})),
+  edit: (chat, id, text, kb) => apiHtml('editMessageText', Object.assign({ chat_id: chat, message_id: id, text: clipHtml(text, 4000) }, base, kb ? { reply_markup: paintMarkup(kb) } : {})),
   del: (chat, id) => api('deleteMessage', { chat_id: chat, message_id: id }),
   answer: (id, text) => api('answerCallbackQuery', Object.assign({ callback_query_id: id }, text ? { text: String(text).slice(0, 190) } : {})),
   async getFile(fileId) {
@@ -53,23 +84,29 @@ export const tgApi = {
     return { buf, mime: ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg' };
   },
   async sendPhoto(chat, buf, caption, kb, extra) {
-    const f = new FormData();
-    f.append('chat_id', String(chat));
-    if (extra && extra.reply_to_message_id) { f.append('reply_parameters', JSON.stringify({ message_id: extra.reply_to_message_id, allow_sending_without_reply: true })); }
-    if (caption) { f.append('caption', String(caption).slice(0, 1000)); f.append('parse_mode', 'HTML'); }
-    if (kb) f.append('reply_markup', JSON.stringify(paintMarkup(kb)));
-    f.append('photo', new Blob([buf], { type: 'image/png' }), 'surpri3efx.png');
-    const r = await fetch(`https://api.telegram.org/bot${token()}/sendPhoto`, { method: 'POST', body: f });
-    const j = await r.json().catch(() => ({}));
-    if (!j.ok) throw new Error('sendPhoto: ' + (j.description || r.status));
-    return j.result;
+    const build = (cap, html) => {
+      const f = new FormData();
+      f.append('chat_id', String(chat));
+      if (extra && extra.reply_to_message_id) { f.append('reply_parameters', JSON.stringify({ message_id: extra.reply_to_message_id, allow_sending_without_reply: true })); }
+      if (cap) { f.append('caption', html ? clipHtml(cap, 1000) : plain(cap).slice(0, 1000)); if (html) f.append('parse_mode', 'HTML'); }
+      if (kb) f.append('reply_markup', JSON.stringify(paintMarkup(kb)));
+      f.append('photo', new Blob([buf], { type: 'image/png' }), 'surpri3efx.png');
+      return f;
+    };
+    const go = async (html) => {
+      const r = await fetch(`https://api.telegram.org/bot${token()}/sendPhoto`, { method: 'POST', body: build(caption, html) });
+      const j = await r.json().catch(() => ({}));
+      if (!j.ok) throw new Error('sendPhoto: ' + (j.description || r.status));
+      return j.result;
+    };
+    try { return await go(true); } catch (e) { if (!isParseErr(e) || !caption) throw e; return go(false); }
   },
   leave: (chat) => api('leaveChat', { chat_id: chat }),
   getMember: (chat, user) => api('getChatMember', { chat_id: chat, user_id: user }),
   memberCount: (chat) => api('getChatMemberCount', { chat_id: chat }),
   admins: (chat) => api('getChatAdministrators', { chat_id: chat }),
   editMarkup: (chat, id, kb) => api('editMessageReplyMarkup', { chat_id: chat, message_id: id, reply_markup: paintMarkup(kb) }),
-  editCaption: (chat, id, caption, kb) => api('editMessageCaption', Object.assign({ chat_id: chat, message_id: id, caption: String(caption).slice(0, 1000), parse_mode: 'HTML' }, kb ? { reply_markup: paintMarkup(kb) } : {})),
+  editCaption: (chat, id, caption, kb) => apiHtml('editMessageCaption', Object.assign({ chat_id: chat, message_id: id, caption: clipHtml(caption, 1000), parse_mode: 'HTML' }, kb ? { reply_markup: paintMarkup(kb) } : {})),
   async editPhoto(chat, id, buf, caption, kb) {
     const f = new FormData();
     f.append('chat_id', String(chat)); f.append('message_id', String(id));
