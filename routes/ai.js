@@ -38,7 +38,14 @@ router.post('/chat', auth,
 
 
 // عیب‌یابی: یه درخواست خیلی کوچیک به Gemini می‌زنه و جواب خام (بدون کلید) رو برمی‌گردونه. فقط برای کاربر واردشده.
-router.get('/diag', auth, rateLimit({ windowMs: 10 * 60 * 1000, max: 20, key: (r) => 'aid' + (r.user && r.user.uid) }), async (req, res) => {
+// فقط ادمین (هدر X-Admin-Key): این مسیر با کلید سرور به سرویس هوش مصنوعی وصل می‌شه و نباید برای هر کاربری باز باشه
+function adminOnly(req, res, next) {
+  const exp = process.env.ADMIN_KEY || '';
+  const sha = (x) => crypto.createHash('sha256').update(String(x)).digest();
+  if (!exp || !crypto.timingSafeEqual(sha(req.get('x-admin-key') || ''), sha(exp))) return res.status(401).json({ error: 'unauthorized' });
+  next();
+}
+router.get('/diag', rateLimit({ windowMs: 10 * 60 * 1000, max: 20 }), adminOnly, async (req, res) => {
   const st0 = aiStatus();
   if (st0.provider === 'groq') return res.json({ provider: 'groq', model: st0.model, keySet: true, hint: 'برای تست Groq از /api/ai/test-page استفاده کن.' });
   const key = process.env.GEMINI_API_KEY;
