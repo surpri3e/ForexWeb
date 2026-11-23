@@ -17,6 +17,7 @@ import newsRoutes, { startNewsRefresh } from './routes/news.js';
 import ratesRoutes from './routes/rates.js';
 import statementRoutes from './routes/statement.js';
 import { rateLimit } from './lib/limit.js';
+import pwaRoutes from './lib/pwa.js';
 import { ensureSchema, getAuth, sql, tokenFresh } from './lib/db.js';
 import { loadAiConfig, loadAiUsage } from './lib/aicore.js';
 
@@ -102,6 +103,10 @@ app.use('/api/ai', express.json({ limit: '60kb' }), aiRoutes);
 app.use('/api/statement', express.json({ limit: '3mb' }), statementRoutes); // تحلیل استیتمنت از عکس
 app.use('/api/telegram', telegramRoutes);
 app.use('/api/sync', writes(400), syncRoutes);
+
+// نصب‌پذیری به‌صورت اپ: manifest و service worker و آیکن‌ها و مدرک اتصال به اپ اندروید
+app.use(pwaRoutes);
+app.use('/icons', express.static(path.join(__dirname, 'icons'), { maxAge: '7d' }));
 
 app.get('/healthz', (req, res) => res.json({ ok: true }));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
