@@ -62,15 +62,26 @@ jobs:
           cat "$HOME/.bubblewrap/config.json"
           npm install -g @bubblewrap/cli
 
-      - name: Build app
+      - name: Generate Android project
         working-directory: android
-        env:
-          BUBBLEWRAP_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          BUBBLEWRAP_KEY_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         run: |
           bubblewrap update --skipVersionUpgrade < <(yes)
-          bubblewrap build --skipPwaValidation < <(yes)
           ls -la
+
+      - name: Build and sign app
+        working-directory: android
+        run: |
+          export ANDROID_SDK_ROOT="$ANDROID_HOME"
+          export JAVA_HOME="$JAVA_HOME_17_X64"
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleRelease
+          UNSIGNED=$(find . -path '*build/outputs/apk/release/*' -name '*.apk' | head -n 1)
+          echo "Found: $UNSIGNED"
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)
+          "$BT/zipalign" -f -p 4 "$UNSIGNED" aligned.apk
+          "$BT/apksigner" sign --ks android.keystore --ks-key-alias android --ks-pass env:KS_PASS --key-pass env:KS_PASS --out app-release-signed.apk aligned.apk
+          "$BT/apksigner" verify app-release-signed.apk
+          ls -la app-release-signed.apk
 
       - name: Show fingerprint
         working-directory: android
