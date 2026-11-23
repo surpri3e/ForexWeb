@@ -1,0 +1,101 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    env:
+      KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      KS_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+      SITE: https://forexweb.onrender.com
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Check password secret
+        run: |
+          if [ -z "$KS_PASS" ]; then
+            echo "Secret ANDROID_KEYSTORE_PASSWORD is empty or missing."
+            exit 1
+          fi
+          if [ "${#KS_PASS}" -lt 6 ]; then
+            echo "Password must be at least 6 characters."
+            exit 1
+          fi
+
+      - name: Wake up the website
+        run: |
+          curl -fsS --retry 12 --retry-delay 10 --retry-all-errors --max-time 60 "$SITE/manifest.webmanifest" -o /dev/null
+          echo "Site is up and manifest is reachable."
+
+      - name: Prepare signing key
+        working-directory: android
+        run: |
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > android.keystore
+            echo "Using saved key from secret."
+          else
+            keytool -genkeypair -v -keystore android.keystore -alias android \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass "$KS_PASS" -keypass "$KS_PASS" \
+              -dname "CN=Surpri3eFX, O=Surpri3eFX, C=IR"
+            mkdir -p ../keyout
+            cp android.keystore ../keyout/android.keystore
+            echo "Created a NEW key. Save the keystore-SAVE-THIS artifact."
+          fi
+
+      - name: Configure Bubblewrap
+        run: |
+          mkdir -p "$HOME/.bubblewrap"
+          printf '{"jdkPath":"%s","androidSdkPath":"%s"}\n' "$JAVA_HOME_17_X64" "$ANDROID_HOME" > "$HOME/.bubblewrap/config.json"
+          cat "$HOME/.bubblewrap/config.json"
+          npm install -g @bubblewrap/cli
+
+      - name: Build app
+        working-directory: android
+        env:
+          BUBBLEWRAP_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          BUBBLEWRAP_KEY_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          bubblewrap update --skipVersionUpgrade < <(yes)
+          bubblewrap build --skipPwaValidation < <(yes)
+          ls -la
+
+      - name: Show fingerprint
+        working-directory: android
+        run: |
+          {
+            echo "## SHA256 fingerprint (copy the long line into Render as ANDROID_SHA256)"
+            echo
+            echo '```'
+            keytool -list -v -keystore android.keystore -alias android -storepass "$KS_PASS" | grep "SHA256:" | head -n 1 | sed 's/^ *SHA256: *//'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: android/app-release-signed.apk
+          if-no-files-found: error
+
+      - name: Upload key
+        if: ${{ env.KS_B64 == '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: keystore-SAVE-THIS
+          path: keyout/android.keystore
+          if-no-files-found: error
+
+# END-OF-FILE .github/workflows/android.yml
