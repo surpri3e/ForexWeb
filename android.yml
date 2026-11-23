@@ -1,0 +1,88 @@
+# ساخت فایل APK اندروید از روی سایت (Trusted Web Activity با Bubblewrap)
+# اجرا: تب Actions > Build Android APK > Run workflow
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Check password secret
+        env:
+          PW: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -z "$PW" ]; then
+            echo "::error::Secret ANDROID_KEYSTORE_PASSWORD is missing. Add it in Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+
+      - name: Prepare signing key
+        working-directory: android
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          PW: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > android.keystore
+            echo "Using the saved signing key."
+          else
+            echo "No saved key found: creating a NEW signing key."
+            keytool -genkeypair -v -keystore android.keystore -alias android \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass "$PW" -keypass "$PW" \
+              -dname "CN=Surpri3eFX, O=Surpri3eFX, C=IR"
+            mkdir -p ../keyout
+            cp android.keystore ../keyout/android.keystore
+            base64 -w0 android.keystore > ../keyout/android.keystore.b64.txt
+            echo "NEW_KEY=1" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build APK
+        working-directory: android
+        env:
+          BUBBLEWRAP_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          BUBBLEWRAP_KEY_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          mkdir -p ~/.bubblewrap
+          echo "{\"jdkPath\":\"$JAVA_HOME_17_X64\",\"androidSdkPath\":\"$ANDROID_HOME\"}" > ~/.bubblewrap/config.json
+          npx -y @bubblewrap/cli update --manifest=./twa-manifest.json --skipVersionUpgrade < <(yes)
+          npx -y @bubblewrap/cli build --manifest=./twa-manifest.json --skipPwaValidation < <(yes)
+          ls -la
+
+      - name: Show key fingerprint
+        working-directory: android
+        env:
+          PW: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          FP=$(keytool -list -v -keystore android.keystore -alias android -storepass "$PW" | grep "SHA256:" | head -1 | sed 's/.*SHA256: *//')
+          {
+            echo "### ANDROID_SHA256"
+            echo ""
+            echo "\`$FP\`"
+            echo ""
+            echo "Package: \`ir.surpri3efx.app\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "$FP"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: |
+            android/app-release-signed.apk
+            android/app-release-bundle.aab
+
+      - name: Upload new signing key
+        if: env.NEW_KEY == '1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: keystore-SAVE-THIS
+          path: keyout/
