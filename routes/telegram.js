@@ -176,7 +176,7 @@ const newsDep = {
 };
 // خروجی عکس/متن طبق تنظیم ادمین: اگه عکس خاموش باشه null برمی‌گرده و همه‌جا متن فرستاده می‌شه (سریع‌تر)
 const renderDep = {
-  rates: (o) => (getRatesConfig().image === false ? Promise.resolve(null) : renderRates(o)),
+  rates: () => Promise.resolve(null), // نرخ ارز همیشه فقط متن؛ عکس نرخ‌ها کنسل شده
   news: (o) => (getRatesConfig().newsImage === false ? Promise.resolve(null) : renderNews(o)),
   sessions: (o) => (getRatesConfig().newsImage === false ? Promise.resolve(null) : renderSessions(o)),
   card: renderCard,
