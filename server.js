@@ -9,7 +9,6 @@ import backupRoutes from './routes/backup.js';
 import adminRoutes from './routes/admin.js';
 import messageRoutes from './routes/messages.js';
 import supportRoutes from './routes/support.js';
-import globalRoutes, { startGlobalHousekeeping } from './routes/global.js';
 import aiRoutes from './routes/ai.js';
 import telegramRoutes, { setupTelegram } from './routes/telegram.js';
 import syncRoutes from './routes/sync.js';
@@ -96,7 +95,6 @@ app.use('/api/backup', writes(120), express.json({ limit: '5mb' }), backupRoutes
 app.use('/api/admin', express.json({ limit: '300kb' }), adminRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/support', express.json({ limit: '20kb' }), supportRoutes);
-app.use('/api/global', writes(200), express.json({ limit: '600kb' }), globalRoutes);
 app.use('/api/news', newsRoutes);
 app.use('/api/rates', ratesRoutes);
 app.use('/api/ai', express.json({ limit: '60kb' }), aiRoutes);
@@ -126,7 +124,6 @@ try { await loadAiConfig(); await loadAiUsage(); } catch (e) { console.error('ai
 app.listen(PORT, () => {
   console.log(`Server running on ${PORT}`);
   startNewsRefresh().catch((e) => console.error('news start failed:', e.message));
-  startGlobalHousekeeping();
   setupTelegram().catch((e) => console.error('telegram setup failed:', e.message));
 });
 

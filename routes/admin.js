@@ -175,67 +175,6 @@ router.patch('/messages/:id', async (req, res) => {
   }
 });
 
-// ---------- moderation of the public "Global" feed ----------
-router.get('/global/posts', async (req, res) => {
-  const reported = (req.query && req.query.filter) !== 'all';
-  try {
-    const rows = reported
-      ? await sql`
-        SELECT p.id, p.symbol, p.body, p.hidden, p.created_at, pr.username, pr.banned,
-          (SELECT COUNT(*) FROM post_reports r WHERE r.post_id = p.id)::int AS reports
-        FROM posts p JOIN profiles pr ON pr.user_id = p.user_id
-        WHERE EXISTS (SELECT 1 FROM post_reports r WHERE r.post_id = p.id) OR p.hidden = TRUE
-        ORDER BY p.id DESC LIMIT 60`
-      : await sql`
-        SELECT p.id, p.symbol, p.body, p.hidden, p.created_at, pr.username, pr.banned,
-          (SELECT COUNT(*) FROM post_reports r WHERE r.post_id = p.id)::int AS reports
-        FROM posts p JOIN profiles pr ON pr.user_id = p.user_id
-        ORDER BY p.id DESC LIMIT 60`;
-    res.json({ posts: rows.map((r) => ({ id: r.id, symbol: r.symbol, body: r.body || '', hidden: !!r.hidden, created_at: sec(r.created_at), username: r.username, banned: !!r.banned, reports: r.reports })) });
-  } catch (e) { console.error(e); res.status(500).json({ error: 'server' }); }
-});
-
-router.get('/global/img/:id', async (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (!Number.isInteger(id)) return res.status(404).end();
-  try {
-    const r = await sql`SELECT img_b64 FROM posts WHERE id = ${id}`;
-    if (!r.length) return res.status(404).end();
-    res.set({ 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=60' });
-    res.end(Buffer.from(r[0].img_b64, 'base64'));
-  } catch (e) { console.error(e); res.status(500).end(); }
-});
-
-router.delete('/global/posts/:id', async (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (!Number.isInteger(id)) return res.status(400).json({ error: 'bad_id' });
-  try { await sql`DELETE FROM posts WHERE id = ${id}`; res.json({ ok: true }); }
-  catch (e) { console.error(e); res.status(500).json({ error: 'server' }); }
-});
-
-router.post('/global/posts/:id/hide', async (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (!Number.isInteger(id)) return res.status(400).json({ error: 'bad_id' });
-  const hidden = !!(req.body || {}).hidden;
-  try {
-    await sql`UPDATE posts SET hidden = ${hidden} WHERE id = ${id}`;
-    if (!hidden) await sql`DELETE FROM post_reports WHERE post_id = ${id}`; // restored posts start with a clean report list
-    res.json({ ok: true });
-  } catch (e) { console.error(e); res.status(500).json({ error: 'server' }); }
-});
-
-router.post('/global/ban', async (req, res) => {
-  const u = String((req.body || {}).username || '').toLowerCase().replace(/[^a-z0-9_.]/g, '').slice(0, 20);
-  const banned = !!(req.body || {}).banned;
-  if (!u) return res.status(400).json({ error: 'bad_username' });
-  try {
-    const r = await sql`SELECT user_id FROM profiles WHERE username = ${u}`;
-    if (!r.length) return res.status(404).json({ error: 'no_user' });
-    await sql`UPDATE profiles SET banned = ${banned} WHERE username = ${u}`;
-    res.json({ ok: true });
-  } catch (e) { console.error(e); res.status(500).json({ error: 'server' }); }
-});
-
 // ---------- donation methods (card / wallet / link / text) ----------
 const DKINDS = new Set(['card', 'wallet', 'link', 'text']);
 const cleanTxt = (v, max) => String(v == null ? '' : v).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u200B-\u200F\u202A-\u202E\u2060-\u2069\uFEFF]/g, '').trim().slice(0, max);

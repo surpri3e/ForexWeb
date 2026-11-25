@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { sql, getAuth, forgetAuth } from '../lib/db.js';
-import { userForTg } from '../lib/store.js';
+import { userForTg, dropDoc, unlinkAllForUser } from '../lib/store.js';
 import { rateLimit } from '../lib/limit.js';
 import { tgApi } from './telegram.js';
 
@@ -166,6 +166,8 @@ router.post('/delete', async (req, res) => {
     if (!ok) return res.status(401).json({ error: 'invalid' });
     await sql`DELETE FROM users WHERE id=${u.id}`;
     forgetAuth(u.id);
+    dropDoc(u.id);
+    try { await unlinkAllForUser(u.id); } catch (e) { /* ignore */ }
     res.json({ ok: true });
   } catch (e) {
     console.error(e);
