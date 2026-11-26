@@ -21,6 +21,18 @@ if old not in src:
 src = src.replace(old, "location.protocol==='https:' && location.hostname!=='localhost' && !/Telegram/i")
 src = src.replace('<link rel="manifest" href="/manifest.webmanifest">', '')
 
+# App feel: text is not selectable/copyable (except inside inputs), no long-press menu,
+# no pinch zoom, no pull-glow. Only in the app copy; the website keeps its normal behaviour.
+APP_CSS = ('<style id="sfxAppFeel">*{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}'
+           'input,textarea,[contenteditable="true"]{-webkit-user-select:text;user-select:text}'
+           'img{-webkit-user-drag:none}html,body{overscroll-behavior:none}</style>'
+           '<script>document.addEventListener("contextmenu",function(e){var t=e.target&&e.target.tagName;'
+           'if(t!=="INPUT"&&t!=="TEXTAREA")e.preventDefault()});</script>')
+if src.count('</head>') != 1:
+    sys.exit('</head> not found exactly once')
+src = src.replace('</head>', APP_CSS + '</head>')
+src = re.sub(r'(<meta name="viewport" content=")[^"]*(")', r'\1width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,interactive-widget=resizes-visual\2', src, count=1)
+
 open(os.path.join(www, 'index.html'), 'w', encoding='utf-8').write(src)
 shutil.copytree(os.path.join(root, 'icons'), os.path.join(www, 'icons'))
 print('www ready:', os.path.getsize(os.path.join(www, 'index.html')), 'bytes')
