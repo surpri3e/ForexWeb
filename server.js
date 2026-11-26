@@ -58,6 +58,8 @@ app.use((req, res, next) => {
 
 // The site and API share one domain, so cross-origin access is only needed for extra origins you list.
 const allowed = (process.env.ALLOWED_ORIGINS || 'https://forexweb.onrender.com').split(',').map((s) => s.trim());
+// اپ اندروید مستقل (Capacitor) صفحه‌ها رو از خود گوشی باز می‌کنه و با این مبداها به سرور وصل می‌شه
+allowed.push('https://localhost', 'capacitor://localhost');
 app.use(cors({ origin: (origin, cb) => cb(null, !origin || allowed.includes(origin)) }));
 
 

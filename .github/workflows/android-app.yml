@@ -1,0 +1,130 @@
+name: Build Android App (standalone)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    env:
+      KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      KS_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      # fingerprint of the key made on the first build (23 Nov)
+      OLD_SHA: "A0:81:38:90:E1:84:CC:16:B2:92:B3:F9:6A:1A:6B:ED:BF:25:4F:9B:52:B2:44:1A:82:69:60:FE:2D:7F:0E:B0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Check password secret
+        run: |
+          if [ -z "$KS_PASS" ] || [ "${#KS_PASS}" -lt 6 ]; then
+            echo "Secret ANDROID_KEYSTORE_PASSWORD is missing or shorter than 6 characters."
+            exit 1
+          fi
+
+      - name: Prepare signing key
+        run: |
+          mkdir -p keyout
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > keyout/android.keystore
+            echo "KEY_SOURCE=secret" >> "$GITHUB_ENV"
+          else
+            # reuse the key saved by an earlier build (artifact keystore-SAVE-THIS)
+            ID=$(gh api "repos/$REPO/actions/artifacts?name=keystore-SAVE-THIS&per_page=20" --jq '[.artifacts[] | select(.expired == false)] | sort_by(.created_at) | reverse | .[0].id // empty' || true)
+            if [ -n "$ID" ]; then
+              curl -sSL -H "Authorization: Bearer $GH_TOKEN" -o ks.zip "https://api.github.com/repos/$REPO/actions/artifacts/$ID/zip" && unzip -o -q ks.zip -d ksdl && cp ksdl/android.keystore keyout/android.keystore || rm -f keyout/android.keystore
+            fi
+            if [ -s keyout/android.keystore ] && keytool -list -keystore keyout/android.keystore -alias android -storepass "$KS_PASS" > /dev/null 2>&1; then
+              echo "KEY_SOURCE=artifact" >> "$GITHUB_ENV"
+            else
+              rm -f keyout/android.keystore
+              keytool -genkeypair -v -keystore keyout/android.keystore -alias android \
+                -keyalg RSA -keysize 2048 -validity 10000 \
+                -storepass "$KS_PASS" -keypass "$KS_PASS" \
+                -dname "CN=Surpri3eFX, O=Surpri3eFX, C=IR"
+              echo "KEY_SOURCE=new" >> "$GITHUB_ENV"
+            fi
+          fi
+          ls -la keyout
+
+      - name: Build web files for the app
+        run: python3 capapp/build_www.py
+
+      - name: Create Android project
+        working-directory: capapp
+        run: |
+          npm install --no-audit --no-fund
+          npx cap add android
+          python3 patch_android.py "$((100 + GITHUB_RUN_NUMBER))" "2.$GITHUB_RUN_NUMBER"
+          npx cap sync android
+
+      - name: Build and sign
+        working-directory: capapp/android
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleRelease
+          UNSIGNED=$(find . -path '*build/outputs/apk/release/*' -name '*.apk' | head -n 1)
+          echo "Found: $UNSIGNED"
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)
+          "$BT/zipalign" -f -p 4 "$UNSIGNED" aligned.apk
+          "$BT/apksigner" sign --ks ../../keyout/android.keystore --ks-key-alias android --ks-pass env:KS_PASS --key-pass env:KS_PASS --out Surpri3eFX.apk aligned.apk
+          "$BT/apksigner" verify Surpri3eFX.apk
+          ls -la Surpri3eFX.apk
+
+      - name: Summary
+        run: |
+          FP=$(keytool -list -v -keystore keyout/android.keystore -alias android -storepass "$KS_PASS" | grep "SHA256:" | head -n 1 | sed 's/^ *SHA256: *//')
+          {
+            echo "## App built: Surpri3eFX.apk (version 2.$GITHUB_RUN_NUMBER)"
+            echo
+            echo "Download it from the Artifacts section at the bottom of this page (name: apk)."
+            echo
+            if [ "$FP" = "$OLD_SHA" ]; then
+              echo "Signing key: SAME as the first build (key source: $KEY_SOURCE)."
+            else
+              echo "Signing key: DIFFERENT from the first build (key source: $KEY_SOURCE)."
+              echo "If the key source is new, an older app with the same name must be uninstalled first."
+            fi
+            echo
+            echo '```'
+            echo "$FP"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: capapp/android/Surpri3eFX.apk
+          if-no-files-found: error
+
+      - name: Keep the signing key
+        uses: actions/upload-artifact@v4
+        with:
+          name: keystore-SAVE-THIS
+          path: keyout/android.keystore
+          retention-days: 90
+          if-no-files-found: error
+
+# END-OF-FILE .github/workflows/android-app.yml

@@ -1,0 +1,13 @@
+{
+  "name": "surpri3efx-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Standalone Android app (Capacitor) for Surpri3eFX",
+  "dependencies": {
+    "@capacitor/android": "^6.2.0",
+    "@capacitor/core": "^6.2.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.2.0"
+  }
+}
