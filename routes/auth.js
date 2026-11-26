@@ -10,6 +10,18 @@ import { tgApi } from './telegram.js';
 const router = express.Router();
 const DUMMY_HASH = bcrypt.hashSync('timing-dummy', 10); // equalizes timing when the email does not exist
 const sign = (uid) => jwt.sign({ uid }, process.env.JWT_SECRET, { expiresIn: '30d', algorithm: 'HS256' });
+
+// ---- حالت قطعی دیتابیس (Neon خاموش/سهمیه تموم) ----
+// کسی که قبلاً از همین سرور وارد شده، تا وقتی دیتابیس برگرده با رمزش (یا مینی‌اپ تلگرام) باز هم وارد می‌شه.
+// فقط توی حافظهٔ سرور و ۲۴ ساعت نگه داشته می‌شه (هش bcrypt؛ همونی که توی دیتابیس هست) و با ریستارت سرور پاک می‌شه.
+const OFF_TTL = 24 * 3600e3;
+const offLogin = new Map(); // email → { uid, email, hash, at }
+const offTg = new Map(); // tgId → { uid, email, at }
+const capMap = (m) => { if (m.size > 3000) m.delete(m.keys().next().value); };
+export const dropOffline = (uid) => { for (const [k, v] of [...offLogin]) if (v.uid === uid) offLogin.delete(k); for (const [k, v] of [...offTg]) if (v.uid === uid) offTg.delete(k); };
+// خطای خود دیتابیس (کد پنج‌حرفی Postgres) یا خطای اتصال؟ فقط اتصال/قطعی «قطعی دیتابیس» حساب می‌شه
+const dbDown = (e) => !(e && /^[0-9A-Z]{5}$/.test(String(e.code || '')));
+const sendDown = (res) => res.status(503).json({ error: 'db_down' });
 const normEmail = (e) => String(e ?? '').trim().toLowerCase();
 
 // 10 attempts / 15 min per IP+email (per-IP only would punish shared mobile/ISP addresses)
@@ -52,6 +64,7 @@ router.post('/register', perEmail, perEmailGlobal, async (req, res) => {
   } catch (e) {
     if (e && e.code === '23505') return res.status(409).json({ error: 'exists' }); // simultaneous register
     console.error(e);
+    if (dbDown(e)) return sendDown(res);
     res.status(500).json({ error: 'server' });
   }
 });
@@ -68,10 +81,20 @@ router.post('/login', perEmail, perEmailGlobal, async (req, res) => {
     const ok = await bcrypt.compare(password, u ? u.password_hash : DUMMY_HASH);
     if (!u || !ok) return res.status(401).json({ error: 'invalid' });
 
-    await sql`UPDATE users SET last_login=NOW() WHERE id=${u.id}`;
+    capMap(offLogin); offLogin.set(email, { uid: u.id, email: u.email, hash: u.password_hash, at: Date.now() });
+    Promise.resolve(sql`UPDATE users SET last_login=NOW() WHERE id=${u.id}`).catch(() => {});
     res.json({ token: sign(u.id), email: u.email });
   } catch (e) {
     console.error(e);
+    if (dbDown(e)) {
+      const c = offLogin.get(email);
+      if (c && Date.now() - c.at < OFF_TTL) {
+        const ok = await bcrypt.compare(password, c.hash);
+        if (!ok) return res.status(401).json({ error: 'invalid' });
+        return res.json({ token: sign(c.uid), email: c.email, offline: true });
+      }
+      return sendDown(res);
+    }
     res.status(500).json({ error: 'server' });
   }
 });
@@ -103,10 +126,16 @@ router.post('/telegram', async (req, res) => {
   try {
     // اگه این تلگرام به حساب سایت وصل شده باشه، همون حساب باز می‌شه (ژورنال مشترک)
     const u = await userForTg(v.id);
-    await sql`UPDATE users SET last_login=NOW() WHERE id=${u.id}`;
+    capMap(offTg); offTg.set(String(v.id), { uid: u.id, email: u.email, at: Date.now() });
+    Promise.resolve(sql`UPDATE users SET last_login=NOW() WHERE id=${u.id}`).catch(() => {});
     res.json({ token: sign(u.id), email: u.email });
   } catch (e) {
     console.error(e);
+    if (dbDown(e)) {
+      const c = offTg.get(String(v.id));
+      if (c && Date.now() - c.at < OFF_TTL) return res.json({ token: sign(c.uid), email: c.email, offline: true });
+      return sendDown(res);
+    }
     res.status(500).json({ error: 'server' });
   }
 });
@@ -142,7 +171,7 @@ router.post('/reset', rateLimit({ windowMs: 15 * 60 * 1000, max: 12, key: (req) 
     if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) { await sql`UPDATE password_resets SET tries = tries + 1 WHERE user_id=${u.id}`; return res.status(400).json({ error: 'bad_code' }); }
     const hash = await bcrypt.hash(password, 10);
     await sql`UPDATE users SET password_hash=${hash}, pw_changed_at=NOW() WHERE id=${u.id}`;
-    forgetAuth(u.id); // همهٔ نشست‌های قبلی (توکن‌های قدیمی) از این لحظه باطل می‌شن
+    forgetAuth(u.id); dropOffline(u.id); // همهٔ نشست‌های قبلی (توکن‌های قدیمی) از این لحظه باطل می‌شن
     await sql`DELETE FROM password_resets WHERE user_id=${u.id}`;
     res.json({ ok: true });
   } catch (e) { console.error(e); res.status(500).json({ error: 'server' }); }
@@ -165,7 +194,7 @@ router.post('/delete', async (req, res) => {
     const ok = await bcrypt.compare(password, u.password_hash);
     if (!ok) return res.status(401).json({ error: 'invalid' });
     await sql`DELETE FROM users WHERE id=${u.id}`;
-    forgetAuth(u.id);
+    forgetAuth(u.id); dropOffline(u.id);
     dropDoc(u.id);
     try { await unlinkAllForUser(u.id); } catch (e) { /* ignore */ }
     res.json({ ok: true });
