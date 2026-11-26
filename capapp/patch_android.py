@@ -13,7 +13,16 @@ BAR = '#EDE9E0'     # status/navigation bar (cream, like the site)
 code, name = sys.argv[1], sys.argv[2]
 
 
+import shutil
+IM = shutil.which('convert') or shutil.which('magick')
+if not IM:
+    sys.exit('ImageMagick (convert/magick) is not installed')
+
+
 def sh(*a):
+    a = list(a)
+    if a[0] == 'convert':
+        a[0] = IM
     subprocess.run(a, check=True)
 
 
@@ -60,7 +69,7 @@ splashes = glob.glob(os.path.join(RES, 'drawable*', 'splash.png'))
 if not splashes:
     warn('no splash.png found; default splash stays')
 for p in splashes:
-    w, h = subprocess.run(['identify', '-format', '%w %h', p], capture_output=True, text=True, check=True).stdout.split()
+    w, h = subprocess.run([IM, 'identify', '-format', '%w %h', p] if IM.endswith('magick') else ['identify', '-format', '%w %h', p], capture_output=True, text=True, check=True).stdout.split()
     side = int(min(int(w), int(h)) * 0.42)
     sh('convert', '-size', f'{w}x{h}', f'xc:{BG}', '(', MASK, '-resize', f'{side}x{side}', ')',
        '-gravity', 'center', '-composite', p)

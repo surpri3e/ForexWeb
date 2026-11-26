@@ -71,6 +71,9 @@ jobs:
       - name: Build web files for the app
         run: python3 capapp/build_www.py
 
+      - name: Install ImageMagick
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq imagemagick
+
       - name: Create Android project
         working-directory: capapp
         run: |
