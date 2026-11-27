@@ -13,6 +13,7 @@ import { sql } from '../lib/db.js';
 import { loadDoc } from '../lib/store.js';
 import { statsFor, cardText } from '../lib/card.js';
 import { createReminders } from '../lib/reminders.js';
+import * as newsAlert from '../lib/newsalert.js';
 import { paintMarkup } from '../lib/paint.js';
 import { loadWords, getWords } from '../lib/words.js';
 import { loadLimits, getLimits } from '../lib/limits.js';
@@ -214,6 +215,7 @@ export async function setupTelegram() {
   try { await loadWords(); await loadLimits(); } catch (e) { console.error('words/limits load failed:', e && e.message); }
   setContextProvider(() => buildContext({ getRates: () => getRates(), news: newsDep }));
   reminderSvc.start();
+  newsAlert.start({ events: () => newsDep.events(), send: (chat, text) => tgApi.send(chat, text) });
   groupsSvc.start();
   await step('menuButton', () => api('setChatMenuButton', { menu_button: { type: 'web_app', text: 'ژورنال', web_app: { url: baseUrl() } } }));
   await step('commands', () => api('setMyCommands', {
