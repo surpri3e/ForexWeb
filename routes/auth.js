@@ -101,7 +101,7 @@ router.post('/login', perEmail, perEmailGlobal, async (req, res) => {
 
 
 // ---- ورود خودکار از مینی‌اپ تلگرام (initData با توکن بات اعتبارسنجی می‌شه) ----
-function verifyTelegram(initData) {
+export function verifyTelegram(initData) {
   const tok = process.env.TELEGRAM_BOT_TOKEN;
   if (!tok) return { error: 'tg_off' };
   if (typeof initData !== 'string' || initData.length > 4096) return { error: 'invalid' };

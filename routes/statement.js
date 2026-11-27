@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import { getAuth, sql } from '../lib/db.js';
 import { rateLimit } from '../lib/limit.js';
 import { callAi, aiStatus } from '../lib/aicore.js';
+import { verifyTelegram } from './auth.js';
 import { statementPrompt, parseModelJson, analyze, smartMerge, checkTotals, applyHeaderCosts } from '../lib/statement.js';
 
 const router = express.Router();
@@ -88,7 +89,16 @@ function readCard(body) {
   const buf = Buffer.from(m[2], 'base64'); if (buf.length < 100) return null;
   return { buf, mime: m[1] };
 }
-router.post('/card-link', auth, rateLimit({ windowMs: 10 * 60 * 1000, max: 30, key: (r) => 'stc' + (r.user && r.user.uid) }), (req, res) => {
+// کارت: یا کاربر واردشده (توکن)، یا مینی‌اپ تلگرام با initData معتبر (بدون نیاز به ورود و دیتابیس)
+function cardAuth(req, res, next) {
+  const init = req.get('x-tg-init');
+  if (init) {
+    const v = verifyTelegram(init);
+    if (!v.error) { req.tgId = v.id; req.user = { uid: 'tg' + v.id }; return next(); }
+  }
+  return auth(req, res, next);
+}
+router.post('/card-link', cardAuth, rateLimit({ windowMs: 10 * 60 * 1000, max: 30, key: (r) => 'stc' + (r.user && r.user.uid) }), (req, res) => {
   const c = readCard(req.body); if (!c) return res.status(400).json({ error: 'bad_image' });
   cardsGc(); const id = crypto.randomBytes(12).toString('hex');
   CARDS.set(id, { buf: c.buf, mime: c.mime, exp: Date.now() + CARD_TTL });
@@ -100,10 +110,10 @@ router.get('/card/:file', (req, res) => {
   res.set('Content-Type', v.mime); res.set('Cache-Control', 'private, max-age=600'); res.set('Content-Disposition', 'inline; filename="surpri3efx-card.' + m[2] + '"');
   res.send(v.buf);
 });
-router.post('/send-card', auth, rateLimit({ windowMs: 10 * 60 * 1000, max: 15, key: (r) => 'stsc' + (r.user && r.user.uid) }), async (req, res) => {
+router.post('/send-card', cardAuth, rateLimit({ windowMs: 10 * 60 * 1000, max: 15, key: (r) => 'stsc' + (r.user && r.user.uid) }), async (req, res) => {
   const c = readCard(req.body); if (!c) return res.status(400).json({ error: 'bad_image' });
   try {
-    const links = await sql`SELECT tg_id FROM tg_links WHERE user_id=${req.user.uid} ORDER BY tg_id LIMIT 1`;
+    const links = req.tgId ? [{ tg_id: req.tgId }] : await sql`SELECT tg_id FROM tg_links WHERE user_id=${req.user.uid} ORDER BY tg_id LIMIT 1`;
     if (!links.length) return res.status(404).json({ error: 'tg_not_linked' });
     const { tgApi } = await import('./telegram.js');
     const cap = String((req.body && req.body.caption) || '').replace(/[<>&]/g, '').slice(0, 900);

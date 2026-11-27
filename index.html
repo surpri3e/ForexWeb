@@ -1234,8 +1234,11 @@ new MutationObserver(function(){if(!m.hidden)put()}).observe(m,{attributes:true,
   function sess(){try{var s=JSON.parse(localStorage.getItem('sfx_sess')||'null');return s&&s.token?s:null}catch(e){return null}}
   function toast(t){var d=document.createElement('div');d.className='mtoast';d.textContent=t;document.body.appendChild(d);setTimeout(function(){d.classList.add('out');setTimeout(function(){d.remove()},300)},4200);}
   function post(path,body){
-    var s=sess();if(!s){var e0=new Error('no_login');e0.code='no_login';return Promise.reject(e0);}
-    return fetch(api()+'/api/statement/'+path,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+s.token},body:JSON.stringify(body)})
+    var s=sess(),h={'Content-Type':'application/json'};
+    if(inTg())h['X-Tg-Init']=window.Telegram.WebApp.initData;   // داخل تلگرام بدون ورود هم کار می‌کنه
+    if(s)h['Authorization']='Bearer '+s.token;
+    if(!s&&!h['X-Tg-Init']){var e0=new Error('no_login');e0.code='no_login';return Promise.reject(e0);}
+    return fetch(api()+'/api/statement/'+path,{method:'POST',headers:h,body:JSON.stringify(body)})
       .then(function(r){return r.json().catch(function(){return {}}).then(function(j){if(!r.ok){var e=new Error(j.error||('http'+r.status));e.code=j.error||('http'+r.status);throw e}return j})});
   }
   function shrink(d){return new Promise(function(res){var im=new Image();im.onload=function(){var c=document.createElement('canvas');c.width=im.width;c.height=im.height;c.getContext('2d').drawImage(im,0,0);res(c.toDataURL('image/jpeg',.72))};im.onerror=function(){res(d)};im.src=d})}
@@ -1269,7 +1272,7 @@ new MutationObserver(function(){if(!m.hidden)put()}).observe(m,{attributes:true,
     ev.preventDefault();ev.stopImmediatePropagation();
     if(busy)return;busy=true;var old=t.textContent;t.disabled=true;t.textContent='صبر کن…';
     (t.id==='cardSave'?saveFlow():shareFlow()).catch(function(e){
-      toast(e&&e.code==='no_login'?'برای ذخیره و اشتراک، اول وارد حساب بشو':'نشد؛ چند لحظه بعد دوباره امتحان کن');
+      toast(e&&e.code==='no_login'?'برای ذخیره و اشتراک، اول وارد حساب بشو':'نشد ('+((e&&(e.code||e.message))||'?')+')؛ چند لحظه بعد دوباره امتحان کن');
     }).then(function(){busy=false;t.disabled=false;t.textContent=old});
   },true);
 })();
