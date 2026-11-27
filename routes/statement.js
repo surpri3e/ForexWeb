@@ -107,7 +107,8 @@ router.post('/send-card', auth, rateLimit({ windowMs: 10 * 60 * 1000, max: 15, k
     if (!links.length) return res.status(404).json({ error: 'tg_not_linked' });
     const { tgApi } = await import('./telegram.js');
     const cap = String((req.body && req.body.caption) || '').replace(/[<>&]/g, '').slice(0, 900);
-    await tgApi.sendPhoto(links[0].tg_id, c.buf, cap ? '<b>کارت نتیجهٔ استیتمنت</b>\n' + cap : '<b>کارت نتیجهٔ استیتمنت</b>');
+    const title = String((req.body && req.body.title) || 'کارت نتیجهٔ استیتمنت').replace(/[<>&]/g, '').slice(0, 60) || 'کارت نتیجهٔ استیتمنت';
+    await tgApi.sendPhoto(links[0].tg_id, c.buf, cap ? '<b>' + title + '</b>\n' + cap : '<b>' + title + '</b>');
     res.json({ ok: true });
   } catch (e) {
     console.error('send-card:', e && e.message);

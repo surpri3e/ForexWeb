@@ -1223,6 +1223,57 @@ new MutationObserver(function(){if(!m.hidden)put()}).observe(m,{attributes:true,
   <div class="btns"><button class="btn" id="cardSave">ذخیره</button><button class="btn ghost" id="cardShare">اشتراک</button><button class="btn ghost" id="cardClose">بستن</button></div>
 </div></div>
 
+<script id="sfxCardFix">
+/* ذخیره/اشتراک «کارت نتیجه» داخل مینی‌اپ تلگرام و اپ اندروید:
+   وب‌ویوها دانلود blob و منوی نگه‌داشتن روی عکس ندارن؛ پس کارت یا به چت ربات فرستاده می‌شه
+   یا روی یه لینک موقت می‌ره که با خود تلگرام/مرورگر گوشی دانلود می‌شه. توی مرورگر معمولی دست نمی‌زنیم. */
+(function(){
+  function inTg(){try{return !!(window.Telegram&&window.Telegram.WebApp&&window.Telegram.WebApp.initData)}catch(e){return false}}
+  function inApp(){try{return !!window.Capacitor||location.hostname==='localhost'}catch(e){return false}}
+  function api(){return String(window.SFX_API||'').replace(/\/+$/,'')}
+  function sess(){try{var s=JSON.parse(localStorage.getItem('sfx_sess')||'null');return s&&s.token?s:null}catch(e){return null}}
+  function toast(t){var d=document.createElement('div');d.className='mtoast';d.textContent=t;document.body.appendChild(d);setTimeout(function(){d.classList.add('out');setTimeout(function(){d.remove()},300)},4200);}
+  function post(path,body){
+    var s=sess();if(!s){var e0=new Error('no_login');e0.code='no_login';return Promise.reject(e0);}
+    return fetch(api()+'/api/statement/'+path,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+s.token},body:JSON.stringify(body)})
+      .then(function(r){return r.json().catch(function(){return {}}).then(function(j){if(!r.ok){var e=new Error(j.error||('http'+r.status));e.code=j.error||('http'+r.status);throw e}return j})});
+  }
+  function shrink(d){return new Promise(function(res){var im=new Image();im.onload=function(){var c=document.createElement('canvas');c.width=im.width;c.height=im.height;c.getContext('2d').drawImage(im,0,0);res(c.toDataURL('image/jpeg',.72))};im.onerror=function(){res(d)};im.src=d})}
+  function dataOf(){
+    var img=document.getElementById('cardImg');if(!img||!img.src)return Promise.reject(new Error('no_card'));
+    return fetch(img.src).then(function(r){return r.blob()}).then(function(b){return new Promise(function(res){var fr=new FileReader();fr.onload=function(){res(fr.result)};fr.readAsDataURL(b)})})
+      .then(function(d){return d.length<2.8e6?d:shrink(d)});
+  }
+  function openUrl(url,name){
+    var w=window.Telegram&&window.Telegram.WebApp;
+    try{if(inTg()&&w&&w.downloadFile&&w.isVersionAtLeast&&w.isVersionAtLeast('8.0')){w.downloadFile({url:url,file_name:name});return}}catch(e){}
+    try{if(inTg()&&w&&w.openLink){w.openLink(url);return}}catch(e2){}
+    window.open(url,'_blank');
+  }
+  function saveFlow(){
+    return dataOf().then(function(d){return post('card-link',{image:d})}).then(function(r){
+      openUrl((api()||location.origin)+r.path,'Surpri3eFX-card'+(/\.png$/.test(r.path)?'.png':'.jpg'));
+      toast('اگه فایل باز شد، همون‌جا ذخیره‌ش کن');
+    });
+  }
+  function shareFlow(){
+    if(!inTg())return saveFlow();
+    return dataOf().then(function(d){return post('send-card',{image:d,title:'کارت نتیجه',caption:''})}).then(function(){
+      toast('کارت تو چت ربات فرستاده شد؛ همون‌جا نگه دار و ذخیره یا فوروارد کن');
+    }).catch(function(e){if(e&&e.code==='no_login')throw e;return saveFlow();});
+  }
+  var busy=false;
+  document.addEventListener('click',function(ev){
+    var t=ev.target&&ev.target.closest&&ev.target.closest('#cardSave,#cardShare');
+    if(!t||!(inTg()||inApp()))return;
+    ev.preventDefault();ev.stopImmediatePropagation();
+    if(busy)return;busy=true;var old=t.textContent;t.disabled=true;t.textContent='صبر کن…';
+    (t.id==='cardSave'?saveFlow():shareFlow()).catch(function(e){
+      toast(e&&e.code==='no_login'?'برای ذخیره و اشتراک، اول وارد حساب بشو':'نشد؛ چند لحظه بعد دوباره امتحان کن');
+    }).then(function(){busy=false;t.disabled=false;t.textContent=old});
+  },true);
+})();
+</script>
 <script>window.SFX_API = "https://forexweb.onrender.com";</script>
 <script>
 /*! (c) 2026 Surpri3eFX. Proprietary software - copying, modifying, rebranding or redistributing without written permission is prohibited. t.me/Surpri3efx */
