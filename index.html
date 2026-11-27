@@ -1244,8 +1244,15 @@ new MutationObserver(function(){if(!m.hidden)put()}).observe(m,{attributes:true,
   function shrink(d){return new Promise(function(res){var im=new Image();im.onload=function(){var c=document.createElement('canvas');c.width=im.width;c.height=im.height;c.getContext('2d').drawImage(im,0,0);res(c.toDataURL('image/jpeg',.72))};im.onerror=function(){res(d)};im.src=d})}
   function dataOf(){
     var img=document.getElementById('cardImg');if(!img||!img.src)return Promise.reject(new Error('no_card'));
-    return fetch(img.src).then(function(r){return r.blob()}).then(function(b){return new Promise(function(res){var fr=new FileReader();fr.onload=function(){res(fr.result)};fr.readAsDataURL(b)})})
-      .then(function(d){return d.length<2.8e6?d:shrink(d)});
+    // fetch(blob:) توسط CSP سایت (connect-src) بسته‌ست؛ پس عکس رو از روی خود تصویر توی بوم می‌کشیم
+    return new Promise(function(res,rej){
+      try{
+        var w=img.naturalWidth,h=img.naturalHeight;if(!w||!h){rej(new Error('no_card'));return}
+        var c=document.createElement('canvas');c.width=w;c.height=h;c.getContext('2d').drawImage(img,0,0);
+        var d=c.toDataURL('image/jpeg',.92);if(d.length>2.8e6)d=c.toDataURL('image/jpeg',.75);
+        res(d);
+      }catch(e){rej(e)}
+    });
   }
   function openUrl(url,name){
     var w=window.Telegram&&window.Telegram.WebApp;
