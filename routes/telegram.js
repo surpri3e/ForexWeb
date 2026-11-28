@@ -14,6 +14,7 @@ import { loadDoc } from '../lib/store.js';
 import { statsFor, cardText } from '../lib/card.js';
 import { createReminders } from '../lib/reminders.js';
 import * as newsAlert from '../lib/newsalert.js';
+import * as english from '../lib/english.js';
 import { paintMarkup } from '../lib/paint.js';
 import { loadWords, getWords } from '../lib/words.js';
 import { loadLimits, getLimits } from '../lib/limits.js';
@@ -216,6 +217,7 @@ export async function setupTelegram() {
   setContextProvider(() => buildContext({ getRates: () => getRates(), news: newsDep }));
   reminderSvc.start();
   newsAlert.start({ events: () => newsDep.events(), send: (chat, text) => tgApi.send(chat, text) });
+  english.start({ send: (chat, v) => tgApi.send(chat, v.text, { inline_keyboard: v.kb }) });
   groupsSvc.start();
   await step('menuButton', () => api('setChatMenuButton', { menu_button: { type: 'web_app', text: 'ژورنال', web_app: { url: baseUrl() } } }));
   await step('commands', () => api('setMyCommands', {
