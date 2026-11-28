@@ -6,7 +6,8 @@ import crypto from 'crypto';
 import { createBot } from '../lib/bot.js';
 import { botStore, MAX_IMG } from '../lib/store.js';
 import adminDep from '../lib/botadmin.js';
-import { renderNews, renderSessions, renderRates, engineInfo } from '../lib/render.js';
+import { renderNews, renderSessions, renderRates, engineInfo, setBrand } from '../lib/render.js';
+import * as ratesOut from '../lib/ratesout.js';
 import { getRates, getRatesConfig, ratesStatus } from '../lib/rates.js';
 import { renderCard } from '../lib/render.js';
 import { sql } from '../lib/db.js';
@@ -178,7 +179,7 @@ const newsDep = {
 };
 // خروجی عکس/متن طبق تنظیم ادمین: اگه عکس خاموش باشه null برمی‌گرده و همه‌جا متن فرستاده می‌شه (سریع‌تر)
 const renderDep = {
-  rates: () => Promise.resolve(null), // نرخ ارز همیشه فقط متن؛ عکس نرخ‌ها کنسل شده
+  rates: (o) => (getRatesConfig().image === false ? Promise.resolve(null) : renderRates(Object.assign({ bot: BOT_USER }, o))), // اگه ادمین عکس رو کلاً خاموش کرده یا کاربر/گروه «متن» رو انتخاب کرده، null می‌شه (این چک توی خود ربات/گروه‌هاست)
   news: (o) => (getRatesConfig().newsImage === false ? Promise.resolve(null) : renderNews(o)),
   sessions: (o) => (getRatesConfig().newsImage === false ? Promise.resolve(null) : renderSessions(o)),
   card: renderCard,
@@ -209,7 +210,7 @@ export async function setupTelegram() {
   if (!token()) return;
   // اول وب‌هوک ثبت می‌شه (تا اگه چیز دیگه‌ای گیر کرد، ربات بی‌جواب نمونه)؛ خطا توی هر مرحله جلوی بقیه رو نمی‌گیره
   const step = async (name, fn) => { try { await fn(); } catch (e) { console.error('telegram setup ' + name + ' failed:', e && e.message); } };
-  await step('getMe', async () => { const me = await api('getMe', {}); if (me && me.username) BOT_USER = me.username; });
+  await step('getMe', async () => { const me = await api('getMe', {}); if (me && me.username) { BOT_USER = me.username; setBrand(me.username); } });
   await step('setWebhook', () => api('setWebhook', { url: baseUrl() + '/api/telegram/webhook', secret_token: secret(), allowed_updates: ['message', 'callback_query', 'my_chat_member'] }));
   if (!healTimer) { healTimer = setInterval(healWebhook, 10 * 60 * 1000); if (healTimer.unref) healTimer.unref(); }
   try { await Promise.race([groupsSvc.loadSettings(), new Promise((r) => setTimeout(r, 15000))]); } catch (e) { console.error('groups settings load failed:', e && e.message); }
@@ -217,6 +218,7 @@ export async function setupTelegram() {
   setContextProvider(() => buildContext({ getRates: () => getRates(), news: newsDep }));
   reminderSvc.start();
   newsAlert.start({ events: () => newsDep.events(), send: (chat, text) => tgApi.send(chat, text) });
+  ratesOut.start({});
   english.start({ send: (chat, v) => tgApi.send(chat, v.text, { inline_keyboard: v.kb }) });
   groupsSvc.start();
   await step('menuButton', () => api('setChatMenuButton', { menu_button: { type: 'web_app', text: 'ژورنال', web_app: { url: baseUrl() } } }));

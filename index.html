@@ -2554,6 +2554,19 @@ html[data-theme=light] .e-hero:after,html[data-theme=light] .e-snet:after{filter
 
 /* ---- نرخ ارز ---- */
 .rt-h{font-size:14px;font-weight:700;margin:18px 2px 8px}
+.rt-g{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.rt-t{background:var(--card);border:1px solid var(--line);border-radius:22px;padding:12px 12px 10px;display:flex;flex-direction:column;justify-content:space-between;gap:8px;min-height:132px;min-width:0}
+.rt-th{display:flex;align-items:center;gap:9px;flex-direction:row-reverse;justify-content:space-between}
+.rt-f{flex:none;width:36px;height:36px;border-radius:50%;object-fit:cover;box-shadow:0 0 0 1px rgba(0,0,0,.08)}
+.rt-fb{display:flex;align-items:center;justify-content:center;background:var(--gs);color:var(--ac);font-size:11px;font-weight:800}
+.rt-tn{display:flex;flex-direction:column;align-items:flex-end;min-width:0;line-height:1.45;text-align:right}
+.rt-tn b{font-size:13px;font-weight:700;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rt-tn small{font-size:10.5px;color:var(--muted);letter-spacing:.3px}
+.rt-tc{display:flex;align-items:center;justify-content:space-between;direction:ltr;gap:6px;min-height:18px}
+.rt-tc i{font-style:normal;font-size:12px;font-weight:700}.rt-tc i.pu{color:var(--ac)}.rt-tc i.pd{color:var(--red)}
+.rt-tc em{font-style:normal;font-size:10.5px;color:var(--muted);margin-left:auto}
+.rt-tp{direction:ltr;text-align:left}.rt-tp b{font-weight:800;letter-spacing:-.3px;white-space:nowrap}
+
 .rt-c{background:var(--card);border:1px solid var(--line);border-radius:18px;overflow:hidden}
 .rt-r{display:flex;align-items:center;gap:10px;min-height:54px;padding:6px 14px;border-bottom:1px solid var(--line)}
 .rt-r:last-child{border-bottom:0}
@@ -3756,6 +3769,10 @@ function rtUsd(n){if(n>=100)return n.toLocaleString('en-US',{minimumFractionDigi
 function rtChg(c){return c==null?'':'<i class="'+(c<0?'pd':'pu')+'" dir="ltr">'+(c>0?'+':c<0?'−':'')+Math.abs(c).toFixed(2)+'%</i>'}
 function rtRow(sym,name,price,unit,chg){return '<div class="rt-r"><span class="rt-s">'+esc(sym)+'</span><span class="rt-n">'+esc(name)+'</span><span class="rt-p"><b dir="ltr">'+price+'</b><small>'+unit+'</small>'+rtChg(chg)+'</span></div>'}
 function rtSec(t,rows){return rows?'<h4 class="rt-h">'+t+'</h4><div class="rt-c">'+rows+'</div>':''}
+function rtTile(kind,code,name,price,unit,chg,coin){var n=String(price).length,fs=n<=7?23:n<=9?20:n<=11?17:15;
+  return '<div class="rt-t'+(coin?' rt-tap':'')+'"'+(coin?' role="button" tabindex="0" data-coin="'+esc(code)+'"':'')+'><div class="rt-th"><img class="rt-f" src="'+esc((S.api||'')+'/api/rates/flag/'+code+'?k='+kind)+'" alt="" width="36" height="36" loading="lazy" data-fb="'+esc(code.slice(0,3))+'"><span class="rt-tn"><b>'+esc(name)+'</b><small dir="ltr">'+esc(code)+'</small></span></div>'+
+   '<div class="rt-tc">'+rtChg(chg)+'<em>'+unit+'</em></div><div class="rt-tp"><b dir="ltr" style="font-size:'+fs+'px">'+price+'</b></div></div>'}
+function rtGrid(t,tiles){return tiles?'<h4 class="rt-h">'+t+'</h4><div class="rt-g">'+tiles+'</div>':''}
 function rtCoins(d){var rows=(d.crypto||[]).map(function(c){var o={};for(var k in c)o[k]=c[k];return o});
   if(d.usdt){var i=-1;rows.forEach(function(r,j){if(r.sym==='USDT')i=j});if(i>=0){rows[i].toman=d.usdt.price}else rows.unshift({sym:'USDT',name:'تتر',rank:0,usd:null,toman:d.usdt.price,chg:d.usdt.chg})}
   return rows}
@@ -3777,12 +3794,12 @@ function openRates(){
     Array.prototype.forEach.call(o.querySelectorAll('[data-rt]'),function(b){b.classList.toggle('on',b.getAttribute('data-rt')===tab)});
     $('rtT').style.display=view==='coin'?'none':'';
     if(tab==='fx'){
-      var f=(D.fiat||[]).map(function(x){return rtRow(x.code,x.name,rtInt(x.price),'تومان',x.chg)}).join('');
-      var g=(D.gold||[]).map(function(x){return rtRow(x.key==='ons'?'XAU':x.key==='coin'?'COIN':x.key==='silver'?'XAG':'GOLD',x.name,x.unit==='دلار'?rtUsd(x.price):rtInt(x.price),x.unit,x.chg)}).join('');
-      B.innerHTML=(f||g?rtSec('ارز (بازار آزاد)',f)+rtSec('طلا، سکه و نقره',g):'<p class="v3-note">نرخ ارز و طلا الان در دسترس نیست.</p>')+'<p class="v3-note">قیمت‌ها تقریبی‌اند؛ برای خرید و فروش به نرخ صرافی نگاه کن.</p>';return}
+      var f=(D.fiat||[]).map(function(x){return rtTile('fiat',x.code,x.name,rtInt(x.price),'تومان',x.chg)}).join('');
+      var g=(D.gold||[]).map(function(x){var k=x.key==='ons'?'XAU':x.key==='coin'?'COIN':x.key==='silver'?'XAG':'GOLD';return rtTile('gold',k,x.name,x.unit==='دلار'?rtUsd(x.price):rtInt(x.price),x.unit,x.chg)}).join('');
+      B.innerHTML=(f||g?rtGrid('ارز (بازار آزاد)',f)+rtGrid('طلا، سکه و نقره',g):'<p class="v3-note">نرخ ارز و طلا الان در دسترس نیست.</p>')+'<p class="v3-note">قیمت‌ها تقریبی‌اند؛ برای خرید و فروش به نرخ صرافی نگاه کن.</p>';return}
     var rows=rtCoins(D);
     if(view==='coin'){var c=rows.filter(function(r){return r.sym===coin})[0];if(c){B.innerHTML=coinView(c);return}view='list'}
-    B.innerHTML=rows.length?'<h4 class="rt-h">تاپ ۱۰ ارز دیجیتال</h4><div class="rt-c">'+rows.map(function(x){var usdt=x.usd==null||(x.sym==='USDT'&&x.toman);return '<div class="rt-r rt-tap" role="button" tabindex="0" data-coin="'+esc(x.sym)+'"><span class="rt-s">'+esc(x.sym)+'</span><span class="rt-n">'+esc(x.name)+'</span><span class="rt-p"><b dir="ltr">'+(usdt?rtInt(x.toman):rtUsd(x.usd))+'</b><small>'+(usdt?'تومان':'دلار')+'</small>'+rtChg(x.chg)+'</span><span class="rt-go" aria-hidden="true">‹</span></div>'}).join('')+'</div><p class="v3-note">روی هر ارز بزن تا جزئیاتش رو ببینی.</p>':'<p class="v3-note">قیمت ارزهای دیجیتال الان در دسترس نیست.</p>'}
+    B.innerHTML=rows.length?rtGrid('تاپ ۱۰ ارز دیجیتال',rows.map(function(x){var usdt=x.usd==null||(x.sym==='USDT'&&x.toman);return rtTile('crypto',x.sym,x.name,usdt?rtInt(x.toman):'$'+rtUsd(x.usd),usdt?'تومان':'دلار',x.chg,1)}).join(''))+'<p class="v3-note">روی هر ارز بزن تا جزئیاتش رو ببینی.</p>':'<p class="v3-note">قیمت ارزهای دیجیتال الان در دسترس نیست.</p>'}
   function load(){var St=$('rtS');if(!S.api){St.textContent='اتصال به سرور برقرار نیست.';return}
     St.textContent='در حال دریافت قیمت‌ها…';
     fetch(S.api+'/api/rates',{cache:'no-store'}).then(function(r){if(!r.ok)throw 0;return r.json()}).then(function(d){D=d;paint();
@@ -3792,6 +3809,7 @@ function openRates(){
     if(t=e.target.closest('[data-rt]')){tab=t.getAttribute('data-rt');view='list';paint();return}
     if(t=e.target.closest('[data-coin]')){coin=t.getAttribute('data-coin');view='coin';paint();var sb=o.querySelector('.v3-sb');if(sb)sb.scrollTop=0;return}
     if(e.target.closest('[data-rt-back]')){view='list';paint()}});
+  o.addEventListener('error',function(e){var im=e.target;if(im&&im.classList&&im.classList.contains('rt-f')){var sp=document.createElement('span');sp.className='rt-f rt-fb';sp.textContent=im.getAttribute('data-fb')||'';im.replaceWith(sp)}},true);
   o.addEventListener('keydown',function(e){if((e.key==='Enter'||e.key===' ')&&e.target.matches&&e.target.matches('[data-coin]')){e.preventDefault();e.target.click()}});
   load();return o}
 
